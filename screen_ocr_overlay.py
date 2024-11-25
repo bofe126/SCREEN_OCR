@@ -11,6 +11,8 @@ import logging
 import traceback
 from bs4 import BeautifulSoup
 import time
+from paddleocr import PaddleOCR
+import numpy as np
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -45,6 +47,13 @@ class ScreenOCRTool:
         # 获取系统 DPI 缩放
         self.dpi_scale = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
         print(f"系统DPI缩放: {self.dpi_scale}")
+        
+        # 添加OCR引擎配置
+        self.ocr_engine = 'paddle'  # 或 'tesseract'
+        self.paddle_ocr = None
+        if self.ocr_engine == 'paddle':
+            print("初始化PaddleOCR引擎...")
+            self.paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
 
     def setup_keyboard_hook(self):
         """设置全局键盘钩子"""
@@ -179,6 +188,62 @@ class ScreenOCRTool:
     def get_text_positions(self, image):
         """获取文字位置信息"""
         try:
+            if self.ocr_engine == 'paddle':
+                return self._get_text_positions_paddle(image)
+            else:
+                return self._get_text_positions_tesseract(image)
+        except Exception as e:
+            logging.error(f"OCR处理失败: {str(e)}")
+            return []
+
+    def _get_text_positions_paddle(self, image):
+        """使用PaddleOCR获取文字位置"""
+        try:
+            # 转换图像为numpy数组
+            if isinstance(image, Image.Image):
+                image = np.array(image)
+            
+            result = []
+            # 进行OCR识别
+            ocr_result = self.paddle_ocr.ocr(image, cls=True)
+            
+            for line in ocr_result:
+                for word_info in line:
+                    # 获取坐标和文本
+                    box = word_info[0]  # 四个角点坐标
+                    text = word_info[1][0]  # 文本内容
+                    confidence = word_info[1][1]  # 置信度
+                    
+                    # 计算边界框
+                    x1 = min(point[0] for point in box)
+                    y1 = min(point[1] for point in box)
+                    x2 = max(point[0] for point in box)
+                    y2 = max(point[1] for point in box)
+                    
+                    # 计算每个字符的宽度
+                    if len(text) > 0:
+                        char_width = (x2 - x1) / len(text)
+                        
+                        # 为每个字符创建单独的文本块
+                        for i, char in enumerate(text):
+                            char_x = x1 + i * char_width
+                            result.append({
+                                'text': char,
+                                'x': int(char_x),
+                                'y': int(y1),
+                                'width': int(char_width),
+                                'height': int(y2 - y1)
+                            })
+            
+            return result
+            
+        except Exception as e:
+            logging.error(f"PaddleOCR处理失败: {str(e)}")
+            return []
+
+    def _get_text_positions_tesseract(self, image):
+        """使用Tesseract获取文字位置（原有的实现）"""
+        try:
             hocr_data = pytesseract.image_to_pdf_or_hocr(
                 image,
                 extension='hocr',
@@ -212,8 +277,9 @@ class ScreenOCRTool:
                             })
             
             return result
+            
         except Exception as e:
-            logging.error(f"OCR处理失败: {str(e)}")
+            logging.error(f"Tesseract处理失败: {str(e)}")
             return []
 
     def show_overlay_text(self, text_blocks):
@@ -578,7 +644,7 @@ class ScreenOCRTool:
         except Exception as e:
             print(f"运行错误: {str(e)}")
         finally:
-            print("程序正在退出���清理资源...")
+            print("程序正在退出清理资源...")
             self.cleanup_windows()
             self.cleanup_hook()
             if self.root:

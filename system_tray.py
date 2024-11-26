@@ -302,7 +302,7 @@ class ConfigDialog:
         button_frame.grid(row=current_row + 1, column=0, sticky="e", pady=(25, 0))
         
         # 按钮
-        cancel_btn = ttk.Button(button_frame, text="取消", command=self.root.destroy)
+        cancel_btn = ttk.Button(button_frame, text="取消", command=self.on_closing)
         cancel_btn.pack(side="right", padx=(0, 5))
         
         save_btn = ttk.Button(button_frame, text="保存", command=self.save_config)
@@ -429,8 +429,11 @@ class ConfigDialog:
             "debug_log": self.debug_text.get('1.0', 'end-1c') if self.show_debug_var.get() else ""
         })
         self.callback(self.config)
-        self.root.destroy()
-    
+        if self.root and self.root.winfo_exists():
+            self.root.quit()
+            self.root.destroy()
+            self.root = None
+
     def show(self):
         """显示配置对话框"""
         if not self.root:
@@ -448,12 +451,16 @@ class ConfigDialog:
         except Exception as e:
             print(f"显示配置窗口时发生错误: {e}")
             self.on_closing()
-
+            
     def on_closing(self):
         """处理窗口关闭事件"""
         try:
-            if self.root:
+            if self.root and self.root.winfo_exists():
+                # 发送一个空的配置更新，通知SystemTray清理对话框
+                self.callback(self.config)
+                self.root.quit()
                 self.root.destroy()
+                self.root = None
         except Exception as e:
             print(f"关闭窗口时发生错误: {e}")
 
@@ -471,11 +478,22 @@ class SystemTray:
     def _create_config_dialog(self):
         """在主线程中创建配置对话框"""
         try:
-            # 如果已有对话框，将其提到前台
-            if self.dialog and hasattr(self.dialog, 'root') and self.dialog.root.winfo_exists():
+            # 如果已有对话框且窗口仍然存在，将其提到前台
+            if (self.dialog and hasattr(self.dialog, 'root') and 
+                self.dialog.root and self.dialog.root.winfo_exists()):
                 self.dialog.root.lift()
                 self.dialog.root.focus_force()
                 return
+            
+            # 确保之前的对话框被正确清理
+            if self.dialog:
+                try:
+                    if hasattr(self.dialog, 'root') and self.dialog.root:
+                        self.dialog.root.quit()
+                        self.dialog.root.destroy()
+                except:
+                    pass
+                self.dialog = None
             
             # 创建新的对话框
             self.dialog = ConfigDialog(self.config, self.on_config_changed)
@@ -483,7 +501,33 @@ class SystemTray:
             
         except Exception as e:
             print(f"创建配置窗口时发生错误: {e}")
-    
+            # 清理失效的对话框引用
+            if self.dialog:
+                try:
+                    if hasattr(self.dialog, 'root') and self.dialog.root:
+                        self.dialog.root.quit()
+                        self.dialog.root.destroy()
+                except:
+                    pass
+                self.dialog = None
+
+    def on_config_changed(self, new_config):
+        """配置更改回调"""
+        try:
+            self.config = new_config
+            self.save_config()
+            # 清理对话框引用
+            if self.dialog:
+                if hasattr(self.dialog, 'root') and self.dialog.root:
+                    try:
+                        self.dialog.root.quit()
+                        self.dialog.root.destroy()
+                    except:
+                        pass
+                self.dialog = None
+        except Exception as e:
+            print(f"保存配置时发生错误: {e}")
+
     def show_config(self, icon, item):
         """触发显示配置对话框"""
         try:
@@ -491,7 +535,7 @@ class SystemTray:
                 self.ocr.config_queue.put(self._create_config_dialog)
         except Exception as e:
             print(f"触发配置窗口时发生错误: {e}")
-    
+
     def create_icon(self):
         """创建系统托盘图标"""
         # 创建一个 22x22 的图标
@@ -533,11 +577,9 @@ class SystemTray:
         if self.ocr:
             def toggle():
                 self.ocr.toggle_enabled()
-                # 更新菜单项文本
-                enabled = self.ocr.enabled
-                item.text = "禁用服务" if enabled else "启用服务"
-                # 更新图标
+                # 更新图标和菜单
                 icon.icon = self.create_icon()
+                icon.menu = self.create_menu()
             
             # 将任务添加到OCR实例的配置队列
             self.ocr.config_queue.put(toggle)
@@ -546,7 +588,7 @@ class SystemTray:
         """创建系统托盘菜单"""
         return pystray.Menu(
             pystray.MenuItem("设置", self.show_config),
-            pystray.MenuItem("禁用服务", self.toggle_service),
+            pystray.MenuItem("启动服务", self.toggle_service, checked=lambda item: self.ocr and self.ocr.enabled),
             pystray.MenuItem("退出", self.quit)
         )
     
@@ -554,40 +596,31 @@ class SystemTray:
         """退出程序"""
         try:
             # 关闭配置窗口
-            if self.dialog and hasattr(self.dialog, 'root'):
+            if self.dialog and hasattr(self.dialog, 'root') and self.dialog.root.winfo_exists():
                 try:
                     self.dialog.root.destroy()
                 except:
                     pass
+            self.dialog = None
             
             # 停止OCR服务
             if self.ocr:
                 try:
-                    self.ocr.cleanup()  # 使用新的cleanup方法
+                    if hasattr(self.ocr, 'cleanup'):
+                        self.ocr.cleanup()
                 except Exception as e:
                     print(f"停止OCR服务时发生错误: {e}")
             
             # 停止系统托盘图标
-            if self.icon:
-                self.icon.stop()
-                
-            # 退出主程序
-            if self.ocr and hasattr(self.ocr, 'root'):
-                self.ocr.root.quit()
-                
+            icon.stop()
+            
+            # 强制退出程序
+            os._exit(0)
+            
         except Exception as e:
             print(f"退出程序时发生错误: {e}")
             # 确保程序退出
-            import sys
-            sys.exit(1)
-    
-    def on_config_changed(self, new_config):
-        """配置更改回调"""
-        try:
-            self.config = new_config
-            self.save_config()
-        except Exception as e:
-            print(f"保存配置时发生错误: {e}")
+            os._exit(1)
     
     def load_config(self):
         """加载配置文件"""

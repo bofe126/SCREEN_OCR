@@ -1,7 +1,7 @@
 {
-    "ocr_engine": "PaddleOCR",
-    "trigger_delay_ms": 300,
-    "hotkey": "alt",
+    "ocr_engine": "PaddleOCR (默认)",
+    "trigger_delay_ms": 350,
+    "hotkey": "CTRL+SHIFT",
     "auto_copy": true,
     "show_debug": false,
     "debug_log": ""

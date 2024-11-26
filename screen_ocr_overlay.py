@@ -24,7 +24,7 @@ class ScreenOCRTool:
         print("初始化程序...")
         # 添加配置队列和状态标志
         self.config_queue = queue.Queue()
-        self.enabled = True
+        self.enabled = True  # 默认启用服务
         
         # 初始化主窗口
         self.root = tk.Tk()
@@ -54,13 +54,84 @@ class ScreenOCRTool:
         self.dpi_scale = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
         print(f"系统DPI缩放: {self.dpi_scale}")
         
-        # 添加OCR引擎配置
-        self.ocr_engine = 'paddle'  # 或 'tesseract'
+        # 初始化OCR相关属性
         self.paddle_ocr = None
-        if self.ocr_engine == 'paddle':
-            print("初始化PaddleOCR引擎...")
-            self.paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+        self.ocr_engine = None  # 将在reload_config中设置
+        self.trigger_delay_ms = 300  # 默认触发延时
+        self.hotkey = 'alt'  # 默认快捷键
+        self.pressed_keys = set()  # 用于跟踪当前按下的键
         
+        # 定义虚拟键码映射
+        self.key_mapping = {
+            # 控制键
+            'ctrl': [162, 163],     # 左右CTRL键
+            'alt': [164, 165],      # 左右ALT键
+            'shift': [160, 161],    # 左右SHIFT键
+            'win': [91, 92],        # 左右WIN键
+            
+            # 功能键
+            'f1': [112], 'f2': [113], 'f3': [114], 'f4': [115],
+            'f5': [116], 'f6': [117], 'f7': [118], 'f8': [119],
+            'f9': [120], 'f10': [121], 'f11': [122], 'f12': [123],
+            
+            # 数字键
+            '0': [48], '1': [49], '2': [50], '3': [51], '4': [52],
+            '5': [53], '6': [54], '7': [55], '8': [56], '9': [57],
+            
+            # 字母键
+            'a': [65], 'b': [66], 'c': [67], 'd': [68], 'e': [69],
+            'f': [70], 'g': [71], 'h': [72], 'i': [73], 'j': [74],
+            'k': [75], 'l': [76], 'm': [77], 'n': [78], 'o': [79],
+            'p': [80], 'q': [81], 'r': [82], 's': [83], 't': [84],
+            'u': [85], 'v': [86], 'w': [87], 'x': [88], 'y': [89],
+            'z': [90],
+            
+            # 特殊键
+            'space': [32],          # 空格键
+            'tab': [9],            # Tab键
+            'enter': [13],         # 回车键
+            'backspace': [8],      # 退格键
+            'delete': [46],        # 删除键
+            'esc': [27],           # ESC键
+            'capslock': [20],      # 大写锁定键
+            
+            # 方向键
+            'up': [38],            # 上箭头
+            'down': [40],          # 下箭头
+            'left': [37],          # 左箭头
+            'right': [39],         # 右箭头
+            
+            # 其他常用键
+            'home': [36],          # Home键
+            'end': [35],           # End键
+            'pageup': [33],        # PageUp键
+            'pagedown': [34],      # PageDown键
+            'insert': [45],        # Insert键
+            'printscreen': [44],   # PrintScreen键
+            'scrolllock': [145],   # ScrollLock键
+            'pause': [19],         # Pause键
+        }
+        
+        # 加载配置
+        if hasattr(self, 'tray'):
+            self.config = self.tray.config
+            self.reload_config()
+        
+    def init_ocr_engine(self):
+        """初始化OCR引擎"""
+        try:
+            # 清理现有的OCR引擎
+            if hasattr(self, 'paddle_ocr'):
+                self.paddle_ocr = None
+
+            # 根据配置初始化OCR引擎
+            if self.ocr_engine == 'paddle':
+                print("初始化PaddleOCR引擎...")
+                self.paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+            print(f"OCR引擎已设置为: {self.ocr_engine}")
+        except Exception as e:
+            print(f"初始化OCR引擎失败: {str(e)}")
+    
     def setup_keyboard_hook(self):
         """设置全局键盘钩子"""
         try:
@@ -80,23 +151,99 @@ class ScreenOCRTool:
                 try:
                     if nCode >= 0:
                         kb = lParam.contents
-                        # 处理ALT键 (VK_MENU = 164)
-                        if kb.vkCode in [164, 165]:  # 左右Alt键的虚拟键码
+                        # 检查是否是配置的快捷键
+                        if self.hotkey.lower() == 'alt':
                             # ALT键按下，且不是重复按键
-                            if wParam == 260 and not kb.flags & 0x80:
+                            if kb.vkCode in [164, 165] and wParam == 260 and not kb.flags & 0x80:
                                 if not self.event_cycle_active:  # 只有在没有活动事件周期时才处理
                                     print("检测到ALT键按下")
                                     self.alt_press_time = time.time()
                                     self.event_cycle_active = True
                             
                             # ALT键松开
-                            elif wParam == 257:
+                            elif kb.vkCode in [164, 165] and wParam == 257:
                                 print("检测到ALT键松开")
+                                # 检查是否满足延时要求
+                                if self.alt_press_time > 0:
+                                    current_time = time.time()
+                                    elapsed = current_time - self.alt_press_time
+                                    trigger_delay = self.trigger_delay_ms / 1000  # 转换为秒
+                                    if elapsed >= trigger_delay:
+                                        print(f"ALT键按下时间超过{self.trigger_delay_ms}毫秒，开始处理...")
+                                        screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+                                        screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+                                        self.capture_and_process(screen_width, screen_height)
+                                    else:
+                                        print(f"ALT键按下时间不足{self.trigger_delay_ms}毫秒，不处理")
                                 self.alt_press_time = 0
                                 if not self.is_processing:  # 如果没有在处理中，就结束事件周期
                                     self.event_cycle_active = False
                                 self.cleanup_pending = True  # 设置清理标志
-                    
+                        elif self.hotkey.lower() == 'ctrl':
+                            # CTRL键按下，且不是重复按键
+                            if kb.vkCode in [162, 163] and wParam == 256 and not kb.flags & 0x80:
+                                if not self.event_cycle_active:
+                                    print("检测到CTRL键按下")
+                                    self.alt_press_time = time.time()
+                                    self.event_cycle_active = True
+                            
+                            # CTRL键松开
+                            elif kb.vkCode in [162, 163] and wParam == 257:
+                                print("检测到CTRL键松开")
+                                # 检查是否满足延时要求
+                                if self.alt_press_time > 0:
+                                    current_time = time.time()
+                                    elapsed = current_time - self.alt_press_time
+                                    trigger_delay = self.trigger_delay_ms / 1000  # 转换为秒
+                                    if elapsed >= trigger_delay:
+                                        print(f"CTRL键按下时间超过{self.trigger_delay_ms}毫秒，开始处理...")
+                                        screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+                                        screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+                                        self.capture_and_process(screen_width, screen_height)
+                                    else:
+                                        print(f"CTRL键按下时间不足{self.trigger_delay_ms}毫秒，不处理")
+                                self.alt_press_time = 0
+                                if not self.is_processing:
+                                    self.event_cycle_active = False
+                                self.cleanup_pending = True
+                        else:
+                            # 处理组合键
+                            key_name = None
+                            # 查找虚拟键码对应的键名
+                            for name, codes in self.key_mapping.items():
+                                if kb.vkCode in codes:
+                                    key_name = name
+                                    break
+                            
+                            if key_name:
+                                if wParam == 256 or wParam == 260:  # 键按下
+                                    if not kb.flags & 0x80:  # 不是重复按键
+                                        self.pressed_keys.add(key_name)
+                                        required_keys = set(self.hotkey.lower().split('+'))
+                                        if required_keys == self.pressed_keys:
+                                            if not self.event_cycle_active:
+                                                print(f"检测到快捷键组合: {'+'.join(sorted(self.pressed_keys))}")
+                                                self.alt_press_time = time.time()
+                                                self.event_cycle_active = True
+                                elif wParam == 257:  # 键松开
+                                    self.pressed_keys.discard(key_name)
+                                    if not self.pressed_keys:
+                                        # 检查是否满足延时要求
+                                        if self.alt_press_time > 0:
+                                            current_time = time.time()
+                                            elapsed = current_time - self.alt_press_time
+                                            trigger_delay = self.trigger_delay_ms / 1000  # 转换为秒
+                                            if elapsed >= trigger_delay:
+                                                print(f"快捷键按下时间超过{self.trigger_delay_ms}毫秒，开始处理...")
+                                                screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
+                                                screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+                                                self.capture_and_process(screen_width, screen_height)
+                                            else:
+                                                print(f"快捷键按下时间不足{self.trigger_delay_ms}毫秒，不处理")
+                                        self.alt_press_time = 0
+                                        if not self.is_processing:
+                                            self.event_cycle_active = False
+                                        self.cleanup_pending = True
                     return user32.CallNextHookEx(None, nCode, wParam, lParam)
                 except Exception as e:
                     print(f"键盘钩子处理错误: {str(e)}")
@@ -325,10 +472,6 @@ class ScreenOCRTool:
         # 如果前后都是中文，不添加空格
         if is_chinese(prev_char) and is_chinese(next_char):
             return False
-        
-        # 如果一个是中文，一个不是，添加空格
-        if is_chinese(prev_char) or is_chinese(next_char):
-            return True
         
         # 检查数字
         def is_digit(char):
@@ -632,8 +775,9 @@ class ScreenOCRTool:
                     if self.alt_press_time > 0 and not self.is_processing and self.enabled:
                         current_time = time.time()
                         elapsed = current_time - self.alt_press_time
-                        if elapsed >= 0.3:
-                            print("ALT按下超过0.3秒，开始处理...")
+                        trigger_delay = self.trigger_delay_ms / 1000  # 转换为秒
+                        if elapsed >= trigger_delay:
+                            print(f"ALT按下超过{self.trigger_delay_ms}毫秒，开始处理...")
                             screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
                             screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
                             self.capture_and_process(screen_width, screen_height)
@@ -678,7 +822,29 @@ class ScreenOCRTool:
         """重新加载配置"""
         try:
             if hasattr(self, 'tray'):
+                old_engine = self.ocr_engine
                 self.config = self.tray.config
+                
+                # 更新触发延时
+                self.trigger_delay_ms = self.config.get('trigger_delay_ms', 300)
+                print(f"触发延时已更新为: {self.trigger_delay_ms}ms")
+                
+                # 更新快捷键配置
+                self.hotkey = self.config.get('hotkey', 'alt')
+                print(f"快捷键已更新为: {self.hotkey}")
+                
+                # 如果OCR引擎为None或发生变化，进行初始化
+                new_engine = self.config.get('ocr_engine', 'paddle')  # 默认使用paddle
+                if new_engine == "PaddleOCR (默认)":
+                    new_engine = "paddle"
+                elif new_engine == "Tesseract":
+                    new_engine = "tesseract"
+                
+                if self.ocr_engine != new_engine:
+                    print(f"OCR引擎{'初始化' if old_engine is None else f'从 {old_engine} 切换'} 为 {new_engine}")
+                    self.ocr_engine = new_engine
+                    self.init_ocr_engine()
+                
                 print("配置已重新加载")
         except Exception as e:
             print(f"重新加载配置失败: {str(e)}")
@@ -686,6 +852,9 @@ class ScreenOCRTool:
     def toggle_enabled(self):
         """切换服务状态"""
         self.enabled = not self.enabled
+        if not self.enabled:
+            # 如果禁用服务，清理所有窗口
+            self.cleanup_windows()
         print(f"服务状态已切换为: {'启用' if self.enabled else '禁用'}")
     
     def cleanup(self):

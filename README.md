@@ -1,71 +1,81 @@
-# Screen OCR Tool
+# Screen OCR Overlay Tool
 
-一个基于Python的屏幕OCR工具，支持快捷键触发、实时文字识别和选择复制。
+一个强大的屏幕文字识别和选择工具 / A powerful screen text recognition and selection tool
 
-## 功能特点
+## 功能特点 / Features
 
-- 按住Alt键0.3秒触发OCR识别
-- 支持按字符级别选择文本
-- 支持右键复制选中文本
-- 支持高分辨率显示器(DPI缩放)
-- 实时显示识别结果
-- 支持多种OCR引擎（Tesseract/PaddleOCR）
+### 1. 智能文本选择 / Smart Text Selection
+- 按行智能识别文本块 / Smart text block recognition by line
+- 支持5像素垂直容差 / 5-pixel vertical tolerance support
+- 自动合并相邻文本 / Auto-merge adjacent text
+- 保持自然阅读顺序 / Maintain natural reading order
 
-## 安装要求
+### 2. 智能空格处理 / Intelligent Space Handling
+- 不添加空格的情况 / No Space Cases:
+  * 中文字符前后 / Around Chinese characters
+  * 标点符号前后 / Around punctuation marks
+  * 连续数字之间 / Between consecutive numbers
+- 添加空格的情况 / Add Space Cases:
+  * 字母和数字之间（间距>10px）/ Between letters and numbers (gap>10px)
+  * 不同类型字符之间 / Between different character types
+  * 中英文混排时 / In Chinese-English mixed text
 
-1. Python 3.6+
-2. 必需的Python包：
-bash pip install pywin32 pillow pytesseract beautifulsoup4
-3. Tesseract OCR引擎：
-   - 从[这里](https://github.com/UB-Mannheim/tesseract/wiki)下载并安装
-   - 安装时选择中文语言包
-   - 默认安装路径：`C:\Program Files\Tesseract-OCR\`
+### 3. 视觉反馈 / Visual Feedback
+- 统一半透明高亮层 / Unified semi-transparent highlight layer
+  * 颜色：#4D94FF / Color: #4D94FF
+  * 透明度：30% / Opacity: 30%
+- 流畅的选择体验 / Smooth selection experience
+- 即时视觉反馈 / Instant visual feedback
 
-## 使用方法
+### 4. 使用方法 / Usage
+1. 按住Alt键0.3秒触发 / Hold Alt for 0.3s to trigger
+2. 拖动选择文本 / Drag to select text
+3. 自动复制到剪贴板 / Auto-copy to clipboard
 
-1. 按住Alt键0.3秒，程序会自动截取当前屏幕
-2. 等待OCR识别完成，识别结果会显示在原位置
-3. 使用鼠标拖动选择需要的文字
-4. 右键点击选中区域，选择"复制"
-5. 按ESC键退出识别界面
+## 技术特点 / Technical Features
 
-## 实现细节
+### OCR引擎 / OCR Engines
+- 主要引擎：PaddleOCR（支持中文）/ Primary: PaddleOCR (Chinese support)
+- 备选引擎：Tesseract / Secondary: Tesseract
 
-1. 截图实现：
-   - 使用win32api实现屏幕捕获
-   - 自动处理DPI缩放问题
+### 依赖项 / Dependencies
+- Python 3.6+
+- tkinter
+- win32api/win32gui
+- pytesseract
+- PaddleOCR
+- PIL (Pillow)
+- BeautifulSoup
 
-2. OCR识别：
-   - 使用Tesseract引擎进行文字识别
-   - 支持中英文混合识别
-   - 按字符级别进行文本定位
+### 系统要求 / System Requirements
+- 操作系统：Windows 10/11 / OS: Windows 10/11
+- 需要安装Tesseract OCR / Requires Tesseract OCR installation
 
-3. 交互设计：
-   - 使用tkinter实现透明覆盖层
-   - 支持文本选择和复制
-   - 模拟文本编辑器的选择体验
+## 性能优化 / Performance Optimization
+- 最小化CPU使用 / Minimal CPU usage
+- 动态DPI缩放支持 / Dynamic DPI scaling support
+- 高效的文本块管理 / Efficient text block management
+- 优化的图形渲染 / Optimized graphics rendering
 
-## 已知问题
+## 安全特性 / Security Features
+- 使用Windows低级键盘钩子 / Uses Windows low-level keyboard hooks
+- 最小化持久状态 / Minimal persistent state
+- 无外部数据传输 / No external data transmission
 
-1. 在某些高DPI设置下可能存在轻微的坐标偏差
-2. 识别速度受机器性能影响
+## 已知限制 / Known Limitations
+- 高DPI环境可能有坐标偏差 / High DPI environments might have coordinate variations
+- OCR识别准确度依赖图像质量 / OCR accuracy depends on image quality
+- 性能因系统配置而异 / Performance varies with system specifications
 
-## 待优化
+## 开发计划 / Development Plans
+1. 提升OCR准确度 / Improve OCR accuracy
+2. 增强多显示器支持 / Enhance multi-monitor support
+3. 添加可配置热键 / Add configurable hotkeys
+4. 实现更强大的错误处理 / Implement robust error handling
+5. 扩展语言支持 / Expand language support
 
-1. 提高OCR识别准确率
-2. 优化高DPI下的显示效果
-3. 增加更多文本处理功能
+## 贡献 / Contributing
+欢迎提交Issue和Pull Request / Issues and Pull Requests are welcome
 
-## 开发环境
-
-- Windows 10/11
-- Python 3.12
-- Tesseract 5.3.1
-
-## 许可证
-
-MIT License
-
-## 作者
-
-bofe126
+## 许可证 / License
+[MIT License](LICENSE)

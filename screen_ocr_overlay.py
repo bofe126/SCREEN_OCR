@@ -5,7 +5,7 @@ import win32ui
 import ctypes
 from ctypes import wintypes
 import pytesseract
-from PIL import Image, ImageTk
+from PIL import Image, ImageTk, ImageDraw
 import tkinter as tk
 import logging
 import traceback
@@ -54,7 +54,7 @@ class ScreenOCRTool:
         if self.ocr_engine == 'paddle':
             print("初始化PaddleOCR引擎...")
             self.paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
-
+        
     def setup_keyboard_hook(self):
         """设置全局键盘钩子"""
         try:
@@ -147,6 +147,7 @@ class ScreenOCRTool:
             # 考虑DPI缩放计算实际大小
             real_width = int(width * self.dpi_scale)
             real_height = int(height * self.dpi_scale)
+            print(f"开始捕获屏幕，实际大小: {real_width}x{real_height}, DPI缩放: {self.dpi_scale}")
             
             hwnd = win32gui.GetDesktopWindow()
             hwndDC = win32gui.GetWindowDC(hwnd)
@@ -169,7 +170,9 @@ class ScreenOCRTool:
             # 调整图像大小以匹配显示
             if self.dpi_scale != 1.0:
                 image = image.resize((width, height), Image.Resampling.LANCZOS)
+                print(f"调整图像大小为: {width}x{height}")
             
+            print("屏幕捕获成功")
             return image
         except Exception as e:
             logging.error(f"屏幕捕获失败: {str(e)}")
@@ -282,6 +285,168 @@ class ScreenOCRTool:
             logging.error(f"Tesseract处理失败: {str(e)}")
             return []
 
+    def should_add_space(self, prev_block, next_block, min_gap=10):
+        if not prev_block or not next_block:
+            return False
+        
+        prev_text = prev_block['text'].strip()
+        next_text = next_block['text'].strip()
+        if not prev_text or not next_text:
+            return False
+        
+        # 获取两个文本块之间的间距
+        gap = next_block['bbox'][0] - (prev_block['bbox'][0] + prev_block['bbox'][2])
+        
+        # 如果间距小于阈值，不添加空格
+        if gap < min_gap:
+            return False
+        
+        # 定义标点符号集合
+        punctuation = set(',.:;?!，。：；？！、（）()[]【】{}""\'\'')
+        
+        # 获取前后字符
+        prev_char = prev_text[-1]
+        next_char = next_text[0]
+        
+        # 如果任一字符是标点，不添加空格
+        if prev_char in punctuation or next_char in punctuation:
+            return False
+        
+        # 检查是否是中文字符
+        def is_chinese(char):
+            return '\u4e00' <= char <= '\u9fff'
+        
+        # 如果前后都是中文，不添加空格
+        if is_chinese(prev_char) and is_chinese(next_char):
+            return False
+        
+        # 如果一个是中文，一个不是，添加空格
+        if is_chinese(prev_char) or is_chinese(next_char):
+            return True
+        
+        # 检查数字
+        def is_digit(char):
+            return char.isdigit()
+        
+        # 如果都是数字，不添加空格
+        if is_digit(prev_char) and is_digit(next_char):
+            return False
+        
+        # 如果一个是字母，一个是数字，添加空格
+        if (prev_char.isalpha() and is_digit(next_char)) or \
+           (is_digit(prev_char) and next_char.isalpha()):
+            return True
+        
+        # 如果都是字母，添加空格
+        if prev_char.isalpha() and next_char.isalpha():
+            return True
+        
+        return False
+
+    def merge_text_blocks(self, selected_blocks):
+        if not selected_blocks:
+            return ""
+        
+        # 获取选中的文本块
+        blocks = [self.text_blocks[block_id] for block_id in selected_blocks]
+        
+        # 按垂直位置分组
+        lines = {}
+        for block in blocks:
+            # 计算文本块的垂直中心点
+            center_y = (block['bbox'][1] + block['bbox'][3]) / 2
+            
+            # 查找匹配的行（允许5像素的垂直偏差）
+            matched_line = None
+            for line_y in lines.keys():
+                if abs(center_y - line_y) <= 5:
+                    matched_line = line_y
+                    break
+            
+            # 如果没有匹配的行，创建新行
+            if matched_line is None:
+                lines[center_y] = []
+            else:
+                center_y = matched_line
+            
+            lines[center_y].append(block)
+        
+        # 对每一行的文本块按x坐标排序
+        result = []
+        for y in sorted(lines.keys()):
+            line_blocks = lines[y]
+            line_blocks.sort(key=lambda b: b['bbox'][0])  # 按x坐标排序
+            
+            # 合并同一行的文本，用空格分隔
+            line_text = ''
+            for i, block in enumerate(line_blocks):
+                if i > 0:
+                    prev_block = line_blocks[i-1]
+                    if self.should_add_space(prev_block, block):
+                        line_text += ' '
+                line_text += block['text'].strip()
+            
+            result.append(line_text)
+        
+        # 用换行符连接不同行
+        return '\n'.join(result)
+
+    def create_highlight_layer(self, canvas, selected_blocks):
+        """创建统一的高亮图层"""
+        if not selected_blocks:
+            return
+        
+        # 获取所有选中块的边界
+        min_x = float('inf')
+        min_y = float('inf')
+        max_x = float('-inf')
+        max_y = float('-inf')
+        
+        for block_id in selected_blocks:
+            block = self.text_blocks[block_id]
+            x1, y1, x2, y2 = block['bbox']
+            min_x = min(min_x, x1)
+            min_y = min(min_y, y1)
+            max_x = max(max_x, x2)
+            max_y = max(max_y, y2)
+        
+        # 创建一个空白图像作为高亮层
+        width = int(max_x - min_x + 4)  # 额外的2像素边距
+        height = int(max_y - min_y + 4)
+        highlight = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+        draw = ImageDraw.Draw(highlight)
+        
+        # 在高亮层上绘制所有选中区域
+        for block_id in selected_blocks:
+            block = self.text_blocks[block_id]
+            x1, y1, x2, y2 = block['bbox']
+            # 调整坐标到相对位置
+            rect_x1 = int(x1 - min_x)
+            rect_y1 = int(y1 - min_y)
+            rect_x2 = int(x2 - min_x)
+            rect_y2 = int(y2 - min_y)
+            # 使用统一的颜色和透明度
+            draw.rectangle([rect_x1, rect_y1, rect_x2, rect_y2],
+                         fill=(77, 148, 255, 77))  # #4D94FF with 30% opacity
+        
+        # 转换为PhotoImage并显示
+        highlight_photo = ImageTk.PhotoImage(highlight)
+        # 保存引用防止被垃圾回收
+        if hasattr(self, 'highlight_photo'):
+            del self.highlight_photo
+        self.highlight_photo = highlight_photo
+        
+        # 清除之前的高亮
+        canvas.delete('highlight')
+        
+        # 创建新的高亮层
+        canvas.create_image(
+            int(min_x - 2), int(min_y - 2),  # 考虑边距
+            image=highlight_photo,
+            anchor='nw',
+            tags='highlight'
+        )
+
     def show_overlay_text(self, text_blocks):
         """显示文本覆盖层"""
         try:
@@ -292,7 +457,7 @@ class ScreenOCRTool:
                     pass
             
             self.overlay_window = tk.Toplevel()
-            self.overlay_window.attributes('-topmost', True, '-alpha', 1.0)  # 设置完全不透明
+            self.overlay_window.attributes('-topmost', True, '-alpha', 1.0)
             self.overlay_window.overrideredirect(True)
             
             try:
@@ -313,119 +478,34 @@ class ScreenOCRTool:
                 width=screen_width,
                 height=screen_height
             )
-            canvas.pack(fill=None, expand=False)  # 不要自动扩展
+            canvas.pack(fill=None, expand=False)
             
             # 显示截图作为背景
             if self.current_screenshot:
-                # 转换为PhotoImage
                 photo = ImageTk.PhotoImage(self.current_screenshot)
                 canvas.photo = photo
                 canvas.create_image(0, 0, image=photo, anchor='nw')
             
             # 初始化选择相关的变量
             self.selection_start = None
-            self.selection_rect = None
+            self.text_blocks = {}
+            self.selected_blocks = set()
             
             # 存储文本块信息
-            self.text_blocks = {}
-            
-            # 按行组织文本块
-            text_lines = {}
             for i, block in enumerate(text_blocks):
-                line_key = block['y'] // 20  # 使用20像素作为行高
-                if line_key not in text_lines:
-                    text_lines[line_key] = []
-                text_lines[line_key].append((i, block))
-            
-            # 在每行内按x坐标排序
-            for line in text_lines.values():
-                line.sort(key=lambda x: x[1]['x'])
-            
-            # 绘制文本
-            for i, block in enumerate(text_blocks):
-                try:
-                    text_id = canvas.create_text(
-                        block['x'],
-                        block['y'],
-                        text=block['text'],
-                        font=('Microsoft YaHei', 12),
-                        fill='black',
-                        anchor='nw'
-                    )
-                    
-                    # 存储文本块信息
-                    line_key = block['y'] // 20
-                    line_blocks = text_lines[line_key]
-                    block_index = next(idx for idx, (i_, b) in enumerate(line_blocks) if i_ == i)
-                    
-                    self.text_blocks[i] = {
-                        'text_id': text_id,
-                        'text': block['text'],
-                        'selected': False,
-                        'bbox': (block['x'], block['y'],
-                                block['x'] + block['width'],
-                                block['y'] + block['height']),
-                        'line': line_key,
-                        'line_index': block_index,
-                        'line_total': len(line_blocks)
-                    }
-                    
-                except Exception as e:
-                    logging.error(f"创建文本块失败: {str(e)}")
-                    continue
-            
-            def get_text_at_position(x, y):
-                """获取指定位置的文本块"""
-                # 直接遍历所有文本块，找到最近的
-                closest_block = None
-                min_distance = float('inf')
-                
-                for block_id, block in self.text_blocks.items():
-                    bx1, by1, bx2, by2 = block['bbox']
-                    
-                    # 计算点到文本块的距离
-                    dx = 0
-                    if x < bx1:
-                        dx = bx1 - x
-                    elif x > bx2:
-                        dx = x - bx2
-                        
-                    dy = 0
-                    if y < by1:
-                        dy = by1 - y
-                    elif y > by2:
-                        dy = y - by2
-                        
-                    distance = (dx * dx + dy * dy) ** 0.5
-                    
-                    # 如果点在文本块内，直接返回
-                    if bx1 <= x <= bx2 and by1 <= y <= by2:
-                        print(f"找到直接命中的文本块: {block['text']}")
-                        return block
-                    
-                    # 记录最近的文本块
-                    if distance < min_distance:
-                        min_distance = distance
-                        closest_block = block
-                
-                # 如果找到了足够近的文本块
-                if closest_block and min_distance < 50:  # 50像素的阈值
-                    print(f"找到最近的文本块: {closest_block['text']}, 距离: {min_distance:.1f}")
-                    return closest_block
-                
-                print(f"未找到合适的文本块，最近距离: {min_distance:.1f}")
-                return None
+                self.text_blocks[i] = {
+                    'text': block['text'],
+                    'bbox': (block['x'], block['y'],
+                            block['x'] + block['width'],
+                            block['y'] + block['height']),
+                    'selected': False
+                }
             
             def on_mouse_down(event):
                 self.selection_start = (event.x, event.y)
                 # 清除之前的选择
-                for block in self.text_blocks.values():
-                    # 删除之前的背景矩形
-                    if 'rect_id' in block:
-                        canvas.delete(block['rect_id'])
-                        del block['rect_id']
-                    block['selected'] = False
-                    canvas.itemconfig(block['text_id'], fill='black')
+                self.selected_blocks.clear()
+                canvas.delete('highlight')
             
             def on_mouse_drag(event):
                 if not self.selection_start:
@@ -434,127 +514,46 @@ class ScreenOCRTool:
                 x1, y1 = self.selection_start
                 x2, y2 = event.x, event.y
                 
-                # 获取起始和结束位置的文本块
-                start_block = get_text_at_position(x1, y1)
-                end_block = get_text_at_position(x2, y2)
+                # 确定选择区域
+                min_x = min(x1, x2)
+                max_x = max(x1, x2)
+                min_y = min(y1, y2)
+                max_y = max(y1, y2)
                 
-                # 清除所有选择和背景矩形
-                for block in self.text_blocks.values():
-                    if 'rect_id' in block:
-                        canvas.delete(block['rect_id'])
-                        del block['rect_id']
-                    block['selected'] = False
-                    canvas.itemconfig(block['text_id'], fill='black')
+                # 清除之前的选中状态
+                self.selected_blocks.clear()
                 
-                # 如果没有找到文本块，直接返回
-                if not (start_block and end_block):
-                    return
-                
-                # 确定选择范围
-                start_line = min(start_block['line'], end_block['line'])
-                end_line = max(start_block['line'], end_block['line'])
-                
-                # 更新选择区域
-                for block in self.text_blocks.values():
-                    if start_line <= block['line'] <= end_line:
-                        # 单行选择
-                        if start_line == end_line:
-                            # 根据鼠标移动方向确定选择范围
-                            if x2 >= x1:
-                                start_idx = start_block['line_index']
-                                end_idx = end_block['line_index']
-                            else:
-                                start_idx = end_block['line_index']
-                                end_idx = start_block['line_index']
-                            
-                            if start_idx <= block['line_index'] <= end_idx:
-                                block['selected'] = True
-                        # 多行选择
-                        else:
-                            # 第一行
-                            if block['line'] == start_line:
-                                if y2 >= y1:
-                                    # 向下选择
-                                    if block['line_index'] >= start_block['line_index']:
-                                        block['selected'] = True
-                                else:
-                                    # 向上选择
-                                    if block['line_index'] <= start_block['line_index']:
-                                        block['selected'] = True
-                            # 最后一行
-                            elif block['line'] == end_line:
-                                if y2 >= y1:
-                                    # 向下选择
-                                    if block['line_index'] <= end_block['line_index']:
-                                        block['selected'] = True
-                                else:
-                                    # 向上选择
-                                    if block['line_index'] >= end_block['line_index']:
-                                        block['selected'] = True
-                            # 中间行
-                            else:
-                                block['selected'] = True
+                # 检查每个文本块
+                for block_id, block in self.text_blocks.items():
+                    bx1, by1, bx2, by2 = block['bbox']
                     
-                    # 更新显示
-                    canvas.itemconfig(block['text_id'], 
-                                    fill='white' if block['selected'] else 'black')
+                    # 检查是否与选择区域相交
+                    if not (max_x < bx1 or min_x > bx2 or max_y < by1 or min_y > by2):
+                        self.selected_blocks.add(block_id)
                 
-                # 更新选择区域显示
-                if self.selection_rect:
-                    canvas.delete(self.selection_rect)
-                
-                selected_blocks = [b for b in self.text_blocks.values() if b['selected']]
-                for block in selected_blocks:
-                    # 为每个选中的文本块创建背景矩形
-                    x1, y1, x2, y2 = block['bbox']
-                    rect_id = canvas.create_rectangle(
-                        x1, y1, x2, y2,
-                        fill='#0078D7',
-                        stipple='gray50',
-                        width=0
-                    )
-                    # 将背景矩形放到文本下面
-                    canvas.tag_lower(rect_id)
-                    # 将背景矩形ID存储到文本块中，以便后续删除
-                    block['rect_id'] = rect_id
+                # 创建新的高亮层
+                self.create_highlight_layer(canvas, self.selected_blocks)
             
             def on_mouse_up(event):
+                if self.selection_start and self.selected_blocks:
+                    # 使用新的文本合并逻辑
+                    text = self.merge_text_blocks(self.selected_blocks)
+                    if text:
+                        self.root.clipboard_clear()
+                        self.root.clipboard_append(text)
+                        print(f"已复制文本:\n{text}")
+                
                 self.selection_start = None
             
-            def show_context_menu(event):
-                menu = tk.Menu(canvas, tearoff=0)
-                menu.add_command(label="复制", command=self.copy_selected_text)
-                menu.post(event.x_root, event.y_root)
-            
-            # 绑定鼠标事件
+            # 绑定事件
             canvas.bind('<Button-1>', on_mouse_down)
             canvas.bind('<B1-Motion>', on_mouse_drag)
             canvas.bind('<ButtonRelease-1>', on_mouse_up)
-            canvas.bind('<Button-3>', show_context_menu)  # 右键菜单
-            
-            # ESC键退出
-            self.overlay_window.bind('<Escape>', lambda e: self.cleanup_windows())
+            canvas.bind('<Escape>', lambda e: self.cleanup_windows())
             
         except Exception as e:
-            logging.error(f"显示文本覆盖层失败: {str(e)}")
+            logging.error(f"显示覆盖层失败: {str(e)}")
             traceback.print_exc()
-            self.cleanup_windows()
-
-    def copy_selected_text(self):
-        """复制选中的文本"""
-        try:
-            selected_text = []
-            for block in self.text_blocks.values():
-                if block['selected']:
-                    selected_text.append(block['text'])
-            
-            if selected_text:
-                text = '\n'.join(selected_text)
-                self.root.clipboard_clear()
-                self.root.clipboard_append(text)
-                print(f"已复制 {len(selected_text)} 个文本块")
-        except Exception as e:
-            print(f"复制文本失败: {str(e)}")
 
     def capture_and_process(self, width, height):
         """捕获并处理屏幕"""
@@ -656,4 +655,4 @@ class ScreenOCRTool:
 
 if __name__ == '__main__':
     tool = ScreenOCRTool()
-    tool.run() 
+    tool.run()

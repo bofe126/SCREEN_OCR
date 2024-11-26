@@ -13,6 +13,8 @@ from bs4 import BeautifulSoup
 import time
 from paddleocr import PaddleOCR
 import numpy as np
+import queue
+import threading
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -20,6 +22,10 @@ logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %
 class ScreenOCRTool:
     def __init__(self):
         print("初始化程序...")
+        # 添加配置队列和状态标志
+        self.config_queue = queue.Queue()
+        self.enabled = True
+        
         # 初始化主窗口
         self.root = tk.Tk()
         self.root.withdraw()
@@ -611,13 +617,19 @@ class ScreenOCRTool:
         try:
             def check_state():
                 try:
+                    # 检查配置队列
+                    while not self.config_queue.empty():
+                        task = self.config_queue.get_nowait()
+                        if callable(task):
+                            task()
+                    
                     # 检查是否需要清理窗口
                     if self.cleanup_pending:
                         self.cleanup_windows()
                         self.cleanup_pending = False
                     
                     # 检查ALT状态
-                    if self.alt_press_time > 0 and not self.is_processing:
+                    if self.alt_press_time > 0 and not self.is_processing and self.enabled:
                         current_time = time.time()
                         elapsed = current_time - self.alt_press_time
                         if elapsed >= 0.3:
@@ -634,6 +646,15 @@ class ScreenOCRTool:
             
             # 启动状态检查
             self.root.after(50, check_state)
+            
+            # 创建系统托盘
+            from system_tray import SystemTray
+            self.tray = SystemTray(self)
+            
+            # 在新线程中运行系统托盘
+            tray_thread = threading.Thread(target=self.tray.run)
+            tray_thread.daemon = True
+            tray_thread.start()
             
             # 主循环
             while self._running:
@@ -652,6 +673,26 @@ class ScreenOCRTool:
                 except:
                     pass
             print("程序退出完成")
+    
+    def reload_config(self):
+        """重新加载配置"""
+        try:
+            if hasattr(self, 'tray'):
+                self.config = self.tray.config
+                print("配置已重新加载")
+        except Exception as e:
+            print(f"重新加载配置失败: {str(e)}")
+    
+    def toggle_enabled(self):
+        """切换服务状态"""
+        self.enabled = not self.enabled
+        print(f"服务状态已切换为: {'启用' if self.enabled else '禁用'}")
+    
+    def cleanup(self):
+        """清理资源"""
+        self._running = False
+        self.cleanup_windows()
+        self.cleanup_hook()
 
 if __name__ == '__main__':
     tool = ScreenOCRTool()

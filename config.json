@@ -1,0 +1,8 @@
+{
+    "ocr_engine": "PaddleOCR",
+    "trigger_delay_ms": 300,
+    "hotkey": "alt",
+    "auto_copy": true,
+    "show_debug": false,
+    "debug_log": ""
+}

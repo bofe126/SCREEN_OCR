@@ -293,12 +293,14 @@ class ScreenOCRTool:
         saveDC = None
         saveBitMap = None
         try:
-            # 考虑DPI缩放计算实际大小
-            real_width = int(width * self.dpi_scale)
-            real_height = int(height * self.dpi_scale)
+            # 获取当前屏幕的完整区域
+            monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromPoint((0,0)))
+            monitor_area = monitor_info["Monitor"]
+            real_width = monitor_area[2] - monitor_area[0]
+            real_height = monitor_area[3] - monitor_area[1]
+            
             print(f"\n=== 屏幕捕获参数 ===")
-            print(f"请求的尺寸: {width}x{height}")
-            print(f"DPI缩放: {self.dpi_scale}")
+            print(f"显示器区域: {monitor_area}")
             print(f"实际捕获尺寸: {real_width}x{real_height}")
             
             # 获取整个桌面窗口
@@ -311,8 +313,14 @@ class ScreenOCRTool:
             saveBitMap.CreateCompatibleBitmap(mfcDC, real_width, real_height)
             saveDC.SelectObject(saveBitMap)
             
-            # 捕获整个屏幕
-            saveDC.BitBlt((0, 0), (real_width, real_height), mfcDC, (0, 0), win32con.SRCCOPY)
+            # 捕获整个屏幕区域，包括任务栏
+            saveDC.BitBlt(
+                (0, 0), 
+                (real_width, real_height), 
+                mfcDC, 
+                (monitor_area[0], monitor_area[1]), 
+                win32con.SRCCOPY
+            )
             
             bmpinfo = saveBitMap.GetInfo()
             bmpstr = saveBitMap.GetBitmapBits(True)
@@ -321,11 +329,6 @@ class ScreenOCRTool:
                 (bmpinfo['bmWidth'], bmpinfo['bmHeight']),
                 bmpstr, 'raw', 'BGRX', 0, 1
             )
-            
-            # 调整图像大小以匹配显示
-            if self.dpi_scale != 1.0:
-                image = image.resize((width, height), Image.Resampling.LANCZOS)
-                print(f"调整图像大小为: {width}x{height}")
             
             print(f"最终截图尺寸: {image.size}")
             print(f"图像模式: {image.mode}")
@@ -614,11 +617,27 @@ class ScreenOCRTool:
             if self.current_screenshot:
                 print(f"截图尺寸: {self.current_screenshot.size}")
             
+            # 获取当前屏幕的完整区域
+            monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromPoint((0,0)))
+            monitor_area = monitor_info["Monitor"]
+            screen_x = monitor_area[0]
+            screen_y = monitor_area[1]
+            screen_width = monitor_area[2] - monitor_area[0]
+            screen_height = monitor_area[3] - monitor_area[1]
+            
+            print(f"显示器区域: {monitor_area}")
+            print(f"窗口位置和大小: {screen_width}x{screen_height}+{screen_x}+{screen_y}")
+            
             # 创建新窗口
             self.overlay_window = tk.Toplevel()
+            self.overlay_window.withdraw()  # 先隐藏窗口，等设置完成后再显示
             
             # 设置窗口属性
             self.overlay_window.attributes('-topmost', True)
+            self.overlay_window.overrideredirect(True)  # 移除窗口边框
+            
+            # 设置窗口大小和位置以覆盖整个屏幕
+            self.overlay_window.geometry(f"{screen_width}x{screen_height}+{screen_x}+{screen_y}")
             
             # 配置grid布局
             self.overlay_window.grid_rowconfigure(0, weight=1)
@@ -629,23 +648,30 @@ class ScreenOCRTool:
                 self.overlay_window,
                 highlightthickness=0,
                 bg='white',
-                cursor='ibeam'
+                width=screen_width,
+                height=screen_height,
+                cursor='wait' if not text_blocks else 'arrow'  # 根据是否有文本块决定光标样式
             )
             canvas.grid(row=0, column=0, sticky='nsew')
             
-            # 设置窗口状态为最大化并移除边框
-            self.overlay_window.state('zoomed')
-            self.overlay_window.overrideredirect(True)
-            
-            # 强制更新以获取正确的尺寸
-            self.overlay_window.update_idletasks()
-            print(f"画布尺寸: {canvas.winfo_width()}x{canvas.winfo_height()}")
-            
             # 显示截图作为背景
             if self.current_screenshot:
+                # 确保截图大小与窗口匹配
+                if self.current_screenshot.size != (screen_width, screen_height):
+                    print(f"调整截图大小从 {self.current_screenshot.size} 到 {screen_width}x{screen_height}")
+                    self.current_screenshot = self.current_screenshot.resize((screen_width, screen_height))
                 photo = ImageTk.PhotoImage(self.current_screenshot)
                 canvas.photo = photo
                 canvas.create_image(0, 0, image=photo, anchor='nw')
+            
+            # 显示窗口
+            self.overlay_window.deiconify()
+            self.overlay_window.lift()
+            self.overlay_window.focus_force()
+            
+            # 如果没有文本块，说明是等待状态，直接返回
+            if not text_blocks:
+                return
             
             # 初始化选择相关的变量
             self.selection_start = None
@@ -662,6 +688,9 @@ class ScreenOCRTool:
                     'height': block['height'],
                     'selected': False
                 }
+            
+            # OCR识别完成后，将光标设置为默认箭头
+            canvas.configure(cursor='arrow')
             
             def on_mouse_down(event):
                 self.selection_start = (event.x, event.y)
@@ -704,15 +733,31 @@ class ScreenOCRTool:
                         self.root.clipboard_clear()
                         self.root.clipboard_append(text)
                         print(f"已复制文本:\n{text}")
-                
+            
                 self.selection_start = None
             
+            def on_mouse_move(event):
+                # 检查鼠标是否在任何文本块上
+                cursor_on_text = False
+                for block in self.text_blocks.values():
+                    if (block['x'] <= event.x <= block['x'] + block['width'] and
+                        block['y'] <= event.y <= block['y'] + block['height']):
+                        cursor_on_text = True
+                        break
+                
+                # 根据鼠标位置设置光标样式
+                if cursor_on_text:
+                    canvas.configure(cursor='ibeam')
+                else:
+                    canvas.configure(cursor='arrow')  # 使用默认箭头光标
+        
             # 绑定事件
             canvas.bind('<Button-1>', on_mouse_down)
             canvas.bind('<B1-Motion>', on_mouse_drag)
             canvas.bind('<ButtonRelease-1>', on_mouse_up)
+            canvas.bind('<Motion>', on_mouse_move)  # 添加鼠标移动事件
             canvas.bind('<Escape>', lambda e: self.cleanup_windows())
-            
+        
         except Exception as e:
             logging.error(f"显示覆盖层失败: {str(e)}")
             traceback.print_exc()
@@ -733,22 +778,48 @@ class ScreenOCRTool:
             width = self.screen_width
             height = self.screen_height
             
+            # 如果已经有窗口，先清理掉
+            if hasattr(self, 'overlay_window') and self.overlay_window:
+                self.overlay_window.destroy()
+                self.overlay_window = None
+            
             self.current_screenshot = self.capture_screen_region(width, height)
             if not self.current_screenshot:
                 print("截图失败")
                 return
             
+            # 创建新窗口并显示等待光标
+            self.show_overlay_text([])  # 传入空的文本块列表，创建初始窗口
+            
+            # 确保窗口创建后立即设置等待光标
+            if hasattr(self, 'overlay_window') and self.overlay_window:
+                for widget in self.overlay_window.winfo_children():
+                    if isinstance(widget, tk.Canvas):
+                        widget.configure(cursor='wait')
+                self.overlay_window.update_idletasks()
+            
             print("开始OCR识别...")
             text_blocks = self.get_text_positions(self.current_screenshot)
+            
+            # OCR识别完成后显示结果
             if text_blocks:
                 print(f"识别到{len(text_blocks)}个文本块，开始显示...")
+                # 销毁当前的等待窗口
+                if hasattr(self, 'overlay_window') and self.overlay_window:
+                    self.overlay_window.destroy()
+                    self.overlay_window = None
+                # 创建新的结果显示窗口
                 self.show_overlay_text(text_blocks)
             else:
                 print("未识别到文本")
-            
+                # 即使没有识别到文本，也更新覆盖层状态
+                if hasattr(self, 'overlay_window') and self.overlay_window:
+                    for widget in self.overlay_window.winfo_children():
+                        if isinstance(widget, tk.Canvas):
+                            widget.configure(cursor='arrow')
+        
         except Exception as e:
             print(f"处理失败: {str(e)}")
-            traceback.print_exc()
         finally:
             self.is_processing = False
             if self.alt_press_time == 0:
@@ -854,7 +925,7 @@ class ScreenOCRTool:
                 
                 # 更新触发延时
                 self.trigger_delay_ms = self.config.get('trigger_delay_ms', 300)
-                print(f"触发延时已更新为: {self.trigger_delay_ms}ms")
+                print(f"触发延迟已更新为: {self.trigger_delay_ms}ms")
                 
                 # 更新快捷键配置
                 self.hotkey = self.config.get('hotkey', 'alt')

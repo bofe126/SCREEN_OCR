@@ -15,28 +15,61 @@ from paddleocr import PaddleOCR
 import numpy as np
 import queue
 import threading
+import sys
 
 # 配置日志
 logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
 
 class ScreenOCRTool:
+    # 默认配置常量
+    DEFAULT_CONFIG = {
+        "ocr_engine": "PaddleOCR",
+        "trigger_delay_ms": 300,
+        "hotkey": "ALT",
+        "auto_copy": True,
+        "show_debug": False,
+        "debug_log": ""
+    }
+    
     def __init__(self):
         print("初始化程序...")
+        # 设置高DPI支持
+        try:
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+        except:
+            try:
+                ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+            except:
+                try:
+                    ctypes.windll.user32.SetProcessDPIAware()  # 旧版API
+                except:
+                    pass
+        
         # 添加配置队列和状态标志
-        self.config_queue = queue.Queue()
-        self.enabled = True  # 默认启用服务
+        self.config_queue: queue.Queue = queue.Queue()
+        self.enabled: bool = True  # 默认启用服务
         
         # 初始化主窗口
         self.root = tk.Tk()
         self.root.withdraw()
         
         # 初始化状态
-        self.is_processing = False
+        self.is_processing: bool = False
         self.current_screenshot = None
-        self._running = True
-        self.alt_press_time = 0
-        self.event_cycle_active = False  # 添加事件周期状态
-        self.cleanup_pending = False  # 添加清理标志
+        self._running: bool = True
+        self.alt_press_time: float = 0
+        self.event_cycle_active: bool = False
+        self.cleanup_pending: bool = False
+        
+        # 获取系统DPI缩放和屏幕尺寸
+        self.dpi_scale: float = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
+        
+        # 使用tkinter获取实际屏幕尺寸
+        self.screen_width = self.root.winfo_screenwidth()
+        self.screen_height = self.root.winfo_screenheight()
+        
+        print(f"系统DPI缩放: {self.dpi_scale}")
+        print(f"屏幕尺寸: {self.screen_width}x{self.screen_height}")
         
         # 设置键盘钩子
         self.keyboard_hook_id = None
@@ -48,19 +81,15 @@ class ScreenOCRTool:
         pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         
         # 添加选择模式配置
-        self.selection_mode = 'text'  # 'text' 或 'region'
-        
-        # 获取系统 DPI 缩放
-        self.dpi_scale = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
-        print(f"系统DPI缩放: {self.dpi_scale}")
+        self.selection_mode: str = 'text'  # 'text' 或 'region'
         
         # 初始化OCR相关属性
-        self.paddle_ocr = None
-        self.ocr_engine = None  # 将在reload_config中设置
-        self.trigger_delay_ms = 300  # 默认触发延时
-        self.hotkey = 'alt'  # 默认快捷键
-        self.pressed_keys = set()  # 用于跟踪当前按下的键
-        
+        self._paddle_ocr = None
+        self._ocr_engine: str = self.DEFAULT_CONFIG["ocr_engine"]
+        self.trigger_delay_ms: int = self.DEFAULT_CONFIG["trigger_delay_ms"]
+        self.hotkey: str = self.DEFAULT_CONFIG["hotkey"]
+        self.pressed_keys: set = set()
+
         # 定义虚拟键码映射
         self.key_mapping = {
             # 控制键
@@ -112,26 +141,47 @@ class ScreenOCRTool:
             'pause': [19],         # Pause键
         }
         
-        # 加载配置
-        if hasattr(self, 'tray'):
-            self.config = self.tray.config
-            self.reload_config()
-        
+    @property
+    def paddle_ocr(self):
+        """延迟初始化PaddleOCR实例"""
+        if self._paddle_ocr is None and self._ocr_engine == "PaddleOCR":
+            import logging
+            logging.getLogger("ppocr").setLevel(logging.WARNING)  # 设置日志级别为WARNING
+            self._paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)  # 关闭PaddleOCR的日志
+        return self._paddle_ocr
+
+    def validate_config(self, config: dict) -> bool:
+        """验证配置值的合法性"""
+        try:
+            if not isinstance(config["trigger_delay_ms"], int) or config["trigger_delay_ms"] < 0:
+                print("错误：trigger_delay_ms 必须是非负整数")
+                return False
+            if not isinstance(config["hotkey"], str) or not config["hotkey"]:
+                print("错误：hotkey 必须是非空字符串")
+                return False
+            if config["ocr_engine"] not in ["PaddleOCR", "Tesseract"]:
+                print("错误：不支持的 OCR 引擎")
+                return False
+            return True
+        except KeyError as e:
+            print(f"错误：缺少必要的配置项 {e}")
+            return False
+
     def init_ocr_engine(self):
         """初始化OCR引擎"""
         try:
             # 清理现有的OCR引擎
-            if hasattr(self, 'paddle_ocr'):
-                self.paddle_ocr = None
+            if hasattr(self, '_paddle_ocr'):
+                self._paddle_ocr = None
 
             # 根据配置初始化OCR引擎
-            if self.ocr_engine == 'paddle':
+            if self._ocr_engine == "PaddleOCR":
                 print("初始化PaddleOCR引擎...")
-                self.paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
-            print(f"OCR引擎已设置为: {self.ocr_engine}")
+                self._paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+            print(f"OCR引擎已设置为: {self._ocr_engine}")
         except Exception as e:
             print(f"初始化OCR引擎失败: {str(e)}")
-    
+
     def setup_keyboard_hook(self):
         """设置全局键盘钩子"""
         try:
@@ -148,108 +198,50 @@ class ScreenOCRTool:
                 ]
             
             def keyboard_hook_proc(nCode, wParam, lParam):
+                """统一的键盘钩子处理函数"""
                 try:
                     if nCode >= 0:
-                        kb = lParam.contents
+                        kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
+                        
+                        hotkey_parts = self.hotkey.lower().split('+')
+                        
+                        # 获取当前按键的虚拟键码集合
+                        current_key_codes = set()
+                        for key in hotkey_parts:
+                            if key in self.key_mapping:
+                                current_key_codes.update(self.key_mapping[key])
+                        
                         # 检查是否是配置的快捷键
-                        if self.hotkey.lower() == 'alt':
-                            # ALT键按下，且不是重复按键
-                            if kb.vkCode in [164, 165] and wParam == 260 and not kb.flags & 0x80:
-                                if not self.event_cycle_active:  # 只有在没有活动事件周期时才处理
-                                    print("检测到ALT键按下")
+                        if kb.vkCode in current_key_codes:
+                            # 按键按下 (WM_KEYDOWN 或 WM_SYSKEYDOWN)
+                            if wParam in (win32con.WM_KEYDOWN, win32con.WM_SYSKEYDOWN):
+                                # 将按键添加到已按下的按键集合中
+                                self.pressed_keys.add(kb.vkCode)
+
+                                # 只有当所有配置的按键都被按下时才开始计时
+                                if all(any(code in self.pressed_keys for code in self.key_mapping.get(key, [])) for key in hotkey_parts):
                                     self.alt_press_time = time.time()
                                     self.event_cycle_active = True
                             
-                            # ALT键松开
-                            elif kb.vkCode in [164, 165] and wParam == 257:
-                                print("检测到ALT键松开")
-                                # 检查是否满足延时要求
-                                if self.alt_press_time > 0:
-                                    current_time = time.time()
-                                    elapsed = current_time - self.alt_press_time
-                                    trigger_delay = self.trigger_delay_ms / 1000  # 转换为秒
-                                    if elapsed >= trigger_delay:
-                                        print(f"ALT键按下时间超过{self.trigger_delay_ms}毫秒，开始处理...")
-                                        screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-                                        screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-                                        self.capture_and_process(screen_width, screen_height)
-                                    else:
-                                        print(f"ALT键按下时间不足{self.trigger_delay_ms}毫秒，不处理")
-                                self.alt_press_time = 0
-                                if not self.is_processing:  # 如果没有在处理中，就结束事件周期
-                                    self.event_cycle_active = False
-                                self.cleanup_pending = True  # 设置清理标志
-                        elif self.hotkey.lower() == 'ctrl':
-                            # CTRL键按下，且不是重复按键
-                            if kb.vkCode in [162, 163] and wParam == 256 and not kb.flags & 0x80:
-                                if not self.event_cycle_active:
-                                    print("检测到CTRL键按下")
-                                    self.alt_press_time = time.time()
-                                    self.event_cycle_active = True
-                            
-                            # CTRL键松开
-                            elif kb.vkCode in [162, 163] and wParam == 257:
-                                print("检测到CTRL键松开")
-                                # 检查是否满足延时要求
-                                if self.alt_press_time > 0:
-                                    current_time = time.time()
-                                    elapsed = current_time - self.alt_press_time
-                                    trigger_delay = self.trigger_delay_ms / 1000  # 转换为秒
-                                    if elapsed >= trigger_delay:
-                                        print(f"CTRL键按下时间超过{self.trigger_delay_ms}毫秒，开始处理...")
-                                        screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-                                        screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-                                        self.capture_and_process(screen_width, screen_height)
-                                    else:
-                                        print(f"CTRL键按下时间不足{self.trigger_delay_ms}毫秒，不处理")
+                            # 按键松开 (WM_KEYUP 或 WM_SYSKEYUP)
+                            elif wParam in (win32con.WM_KEYUP, win32con.WM_SYSKEYUP):
+                                # 从已按下的按键集合中移除
+                                self.pressed_keys.discard(kb.vkCode)
+                                
+                                # 重置计时器和状态
                                 self.alt_press_time = 0
                                 if not self.is_processing:
                                     self.event_cycle_active = False
                                 self.cleanup_pending = True
-                        else:
-                            # 处理组合键
-                            key_name = None
-                            # 查找虚拟键码对应的键名
-                            for name, codes in self.key_mapping.items():
-                                if kb.vkCode in codes:
-                                    key_name = name
-                                    break
-                            
-                            if key_name:
-                                if wParam == 256 or wParam == 260:  # 键按下
-                                    if not kb.flags & 0x80:  # 不是重复按键
-                                        self.pressed_keys.add(key_name)
-                                        required_keys = set(self.hotkey.lower().split('+'))
-                                        if required_keys == self.pressed_keys:
-                                            if not self.event_cycle_active:
-                                                print(f"检测到快捷键组合: {'+'.join(sorted(self.pressed_keys))}")
-                                                self.alt_press_time = time.time()
-                                                self.event_cycle_active = True
-                                elif wParam == 257:  # 键松开
-                                    self.pressed_keys.discard(key_name)
-                                    if not self.pressed_keys:
-                                        # 检查是否满足延时要求
-                                        if self.alt_press_time > 0:
-                                            current_time = time.time()
-                                            elapsed = current_time - self.alt_press_time
-                                            trigger_delay = self.trigger_delay_ms / 1000  # 转换为秒
-                                            if elapsed >= trigger_delay:
-                                                print(f"快捷键按下时间超过{self.trigger_delay_ms}毫秒，开始处理...")
-                                                screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-                                                screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-                                                self.capture_and_process(screen_width, screen_height)
-                                            else:
-                                                print(f"快捷键按下时间不足{self.trigger_delay_ms}毫秒，不处理")
-                                        self.alt_press_time = 0
-                                        if not self.is_processing:
-                                            self.event_cycle_active = False
-                                        self.cleanup_pending = True
-                    return user32.CallNextHookEx(None, nCode, wParam, lParam)
                 except Exception as e:
                     print(f"键盘钩子处理错误: {str(e)}")
-                    return user32.CallNextHookEx(None, nCode, wParam, lParam)
+                    if hasattr(e, '__traceback__'):
+                        traceback.print_tb(e.__traceback__)
+                
+                # 正确调用CallNextHookEx
+                return user32.CallNextHookEx(None, nCode, wParam, lParam)
             
-            # 设置钩子
+            # 保存keyboard_proc作为实例属性以防止被垃圾回收
             HOOKPROC = ctypes.CFUNCTYPE(
                 ctypes.c_long,
                 ctypes.c_int,
@@ -265,7 +257,7 @@ class ScreenOCRTool:
             kernel32.GetModuleHandleW.argtypes = [wintypes.LPCWSTR]
             module_handle = kernel32.GetModuleHandleW(None)
             
-            # 设置SetWindowsHookExW的参数类型
+            # 设置钩子
             user32.SetWindowsHookExW.argtypes = [
                 ctypes.c_int,
                 HOOKPROC,
@@ -283,7 +275,11 @@ class ScreenOCRTool:
             )
             
             if not self.keyboard_hook_id:
-                raise ctypes.WinError(ctypes.get_last_error())
+                error = ctypes.get_last_error()
+                print(f"设置键盘钩子失败，错误码: {error}")
+                raise Exception(f"无法设置键盘钩子，错误码: {error}")
+            else:
+                print("键盘钩子设置成功")
                 
         except Exception as e:
             logging.error(f"设置键盘钩子失败: {str(e)}")
@@ -300,8 +296,12 @@ class ScreenOCRTool:
             # 考虑DPI缩放计算实际大小
             real_width = int(width * self.dpi_scale)
             real_height = int(height * self.dpi_scale)
-            print(f"开始捕获屏幕，实际大小: {real_width}x{real_height}, DPI缩放: {self.dpi_scale}")
+            print(f"\n=== 屏幕捕获参数 ===")
+            print(f"请求的尺寸: {width}x{height}")
+            print(f"DPI缩放: {self.dpi_scale}")
+            print(f"实际捕获尺寸: {real_width}x{real_height}")
             
+            # 获取整个桌面窗口
             hwnd = win32gui.GetDesktopWindow()
             hwndDC = win32gui.GetWindowDC(hwnd)
             mfcDC = win32ui.CreateDCFromHandle(hwndDC)
@@ -310,6 +310,8 @@ class ScreenOCRTool:
             saveBitMap = win32ui.CreateBitmap()
             saveBitMap.CreateCompatibleBitmap(mfcDC, real_width, real_height)
             saveDC.SelectObject(saveBitMap)
+            
+            # 捕获整个屏幕
             saveDC.BitBlt((0, 0), (real_width, real_height), mfcDC, (0, 0), win32con.SRCCOPY)
             
             bmpinfo = saveBitMap.GetInfo()
@@ -325,7 +327,9 @@ class ScreenOCRTool:
                 image = image.resize((width, height), Image.Resampling.LANCZOS)
                 print(f"调整图像大小为: {width}x{height}")
             
-            print("屏幕捕获成功")
+            print(f"最终截图尺寸: {image.size}")
+            print(f"图像模式: {image.mode}")
+            print(f"图像像素: {image.size[0] * image.size[1]}")
             return image
         except Exception as e:
             logging.error(f"屏幕捕获失败: {str(e)}")
@@ -344,7 +348,7 @@ class ScreenOCRTool:
     def get_text_positions(self, image):
         """获取文字位置信息"""
         try:
-            if self.ocr_engine == 'paddle':
+            if self._ocr_engine == "PaddleOCR":
                 return self._get_text_positions_paddle(image)
             else:
                 return self._get_text_positions_tesseract(image)
@@ -448,7 +452,7 @@ class ScreenOCRTool:
             return False
         
         # 获取两个文本块之间的间距
-        gap = next_block['bbox'][0] - (prev_block['bbox'][0] + prev_block['bbox'][2])
+        gap = next_block['x'] - (prev_block['x'] + prev_block['width'])
         
         # 如果间距小于阈值，不添加空格
         if gap < min_gap:
@@ -503,7 +507,7 @@ class ScreenOCRTool:
         lines = {}
         for block in blocks:
             # 计算文本块的垂直中心点
-            center_y = (block['bbox'][1] + block['bbox'][3]) / 2
+            center_y = (block['y'] + block['height']) / 2
             
             # 查找匹配的行（允许5像素的垂直偏差）
             matched_line = None
@@ -524,7 +528,7 @@ class ScreenOCRTool:
         result = []
         for y in sorted(lines.keys()):
             line_blocks = lines[y]
-            line_blocks.sort(key=lambda b: b['bbox'][0])  # 按x坐标排序
+            line_blocks.sort(key=lambda b: b['x'])  # 按x坐标排序
             
             # 合并同一行的文本，用空格分隔
             line_text = ''
@@ -553,7 +557,7 @@ class ScreenOCRTool:
         
         for block_id in selected_blocks:
             block = self.text_blocks[block_id]
-            x1, y1, x2, y2 = block['bbox']
+            x1, y1, x2, y2 = block['x'], block['y'], block['x'] + block['width'], block['y'] + block['height']
             min_x = min(min_x, x1)
             min_y = min(min_y, y1)
             max_x = max(max_x, x2)
@@ -568,7 +572,7 @@ class ScreenOCRTool:
         # 在高亮层上绘制所有选中区域
         for block_id in selected_blocks:
             block = self.text_blocks[block_id]
-            x1, y1, x2, y2 = block['bbox']
+            x1, y1, x2, y2 = block['x'], block['y'], block['x'] + block['width'], block['y'] + block['height']
             # 调整坐标到相对位置
             rect_x1 = int(x1 - min_x)
             rect_y1 = int(y1 - min_y)
@@ -605,29 +609,37 @@ class ScreenOCRTool:
                 except:
                     pass
             
+            print("\n=== 显示覆盖层 ===")
+            print(f"屏幕尺寸: {self.screen_width}x{self.screen_height}")
+            if self.current_screenshot:
+                print(f"截图尺寸: {self.current_screenshot.size}")
+            
+            # 创建新窗口
             self.overlay_window = tk.Toplevel()
-            self.overlay_window.attributes('-topmost', True, '-alpha', 1.0)
-            self.overlay_window.overrideredirect(True)
             
-            try:
-                self.overlay_window.state('zoomed')
-            except:
-                self.overlay_window.attributes('-fullscreen', True)
+            # 设置窗口属性
+            self.overlay_window.attributes('-topmost', True)
             
-            # 获取屏幕尺寸（不考虑DPI缩放）
-            screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-            screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
+            # 配置grid布局
+            self.overlay_window.grid_rowconfigure(0, weight=1)
+            self.overlay_window.grid_columnconfigure(0, weight=1)
             
-            # 创建画布并设置确切的大小
+            # 创建画布
             canvas = tk.Canvas(
                 self.overlay_window,
                 highlightthickness=0,
                 bg='white',
-                cursor='ibeam',
-                width=screen_width,
-                height=screen_height
+                cursor='ibeam'
             )
-            canvas.pack(fill=None, expand=False)
+            canvas.grid(row=0, column=0, sticky='nsew')
+            
+            # 设置窗口状态为最大化并移除边框
+            self.overlay_window.state('zoomed')
+            self.overlay_window.overrideredirect(True)
+            
+            # 强制更新以获取正确的尺寸
+            self.overlay_window.update_idletasks()
+            print(f"画布尺寸: {canvas.winfo_width()}x{canvas.winfo_height()}")
             
             # 显示截图作为背景
             if self.current_screenshot:
@@ -644,9 +656,10 @@ class ScreenOCRTool:
             for i, block in enumerate(text_blocks):
                 self.text_blocks[i] = {
                     'text': block['text'],
-                    'bbox': (block['x'], block['y'],
-                            block['x'] + block['width'],
-                            block['y'] + block['height']),
+                    'x': block['x'],
+                    'y': block['y'],
+                    'width': block['width'],
+                    'height': block['height'],
                     'selected': False
                 }
             
@@ -674,7 +687,7 @@ class ScreenOCRTool:
                 
                 # 检查每个文本块
                 for block_id, block in self.text_blocks.items():
-                    bx1, by1, bx2, by2 = block['bbox']
+                    bx1, by1, bx2, by2 = block['x'], block['y'], block['x'] + block['width'], block['y'] + block['height']
                     
                     # 检查是否与选择区域相交
                     if not (max_x < bx1 or min_x > bx2 or max_y < by1 or min_y > by2):
@@ -712,7 +725,14 @@ class ScreenOCRTool:
         
         try:
             self.is_processing = True
-            print(f"开始截图... 屏幕大小: {width}x{height}")
+            print(f"\n=== 开始截图 ===")
+            print(f"请求的屏幕大小: {width}x{height}")
+            print(f"当前屏幕大小: {self.screen_width}x{self.screen_height}")
+            
+            # 确保使用当前屏幕尺寸
+            width = self.screen_width
+            height = self.screen_height
+            
             self.current_screenshot = self.capture_screen_region(width, height)
             if not self.current_screenshot:
                 print("截图失败")
@@ -737,11 +757,22 @@ class ScreenOCRTool:
     def cleanup_windows(self):
         """清理窗口"""
         try:
+            print("\n=== 清理窗口 ===")
             if hasattr(self, 'overlay_window') and self.overlay_window:
+                print("正在销毁overlay_window")
                 self.overlay_window.destroy()
-            self.current_screenshot = None
+                self.overlay_window = None  # 确保引用被清除
+                print("overlay_window已销毁")
+            if self.current_screenshot:
+                print("清除当前截图")
+                self.current_screenshot = None
+            # 重置处理状态
+            self.is_processing = False
+            self.event_cycle_active = False
+            print("窗口清理完成")
         except Exception as e:
             logging.error(f"清理窗口失败: {str(e)}")
+            print(f"清理窗口时发生错误: {str(e)}")
 
     def cleanup_hook(self):
         """清理键盘钩子"""
@@ -770,18 +801,14 @@ class ScreenOCRTool:
                     if self.cleanup_pending:
                         self.cleanup_windows()
                         self.cleanup_pending = False
-                    
-                    # 检查ALT状态
-                    if self.alt_press_time > 0 and not self.is_processing and self.enabled:
+
+                    # 检查按键延迟触发
+                    if self.event_cycle_active and self.alt_press_time > 0:
                         current_time = time.time()
-                        elapsed = current_time - self.alt_press_time
-                        trigger_delay = self.trigger_delay_ms / 1000  # 转换为秒
-                        if elapsed >= trigger_delay:
-                            print(f"ALT按下超过{self.trigger_delay_ms}毫秒，开始处理...")
-                            screen_width = win32api.GetSystemMetrics(win32con.SM_CXSCREEN)
-                            screen_height = win32api.GetSystemMetrics(win32con.SM_CYSCREEN)
-                            self.capture_and_process(screen_width, screen_height)
-                            self.alt_press_time = 0  # 重置时间，防止重复触发
+                        if (current_time - self.alt_press_time) * 1000 >= self.trigger_delay_ms:
+                            print(f"触发延迟已到 ({self.trigger_delay_ms}ms)")
+                            # 使用保存的屏幕尺寸
+                            self.capture_and_process(self.screen_width, self.screen_height)
                 except Exception as e:
                     print(f"状态检查错误: {str(e)}")
                 finally:
@@ -822,7 +849,7 @@ class ScreenOCRTool:
         """重新加载配置"""
         try:
             if hasattr(self, 'tray'):
-                old_engine = self.ocr_engine
+                old_engine = self._ocr_engine
                 self.config = self.tray.config
                 
                 # 更新触发延时
@@ -834,15 +861,10 @@ class ScreenOCRTool:
                 print(f"快捷键已更新为: {self.hotkey}")
                 
                 # 如果OCR引擎为None或发生变化，进行初始化
-                new_engine = self.config.get('ocr_engine', 'paddle')  # 默认使用paddle
-                if new_engine == "PaddleOCR (默认)":
-                    new_engine = "paddle"
-                elif new_engine == "Tesseract":
-                    new_engine = "tesseract"
-                
-                if self.ocr_engine != new_engine:
+                new_engine = self.config.get('ocr_engine', self.DEFAULT_CONFIG["ocr_engine"])
+                if self._ocr_engine != new_engine:
                     print(f"OCR引擎{'初始化' if old_engine is None else f'从 {old_engine} 切换'} 为 {new_engine}")
-                    self.ocr_engine = new_engine
+                    self._ocr_engine = new_engine
                     self.init_ocr_engine()
                 
                 print("配置已重新加载")

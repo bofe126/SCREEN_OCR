@@ -230,9 +230,9 @@ class ConfigDialog:
         
         self.engine_var = tk.StringVar(value=self.config.get("ocr_engine", self.default_config["ocr_engine"]))
         engine_combo = ttk.Combobox(main_frame, textvariable=self.engine_var, state="readonly", font=ModernTheme.NORMAL_FONT)
-        engine_combo['values'] = ("PaddleOCR (默认)", "Tesseract")
+        engine_combo['values'] = ("PaddleOCR", "Tesseract")
         if self.engine_var.get() == "PaddleOCR":
-            engine_combo.set("PaddleOCR (默认)")
+            engine_combo.set("PaddleOCR")
         engine_combo.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
         current_row += 1
         

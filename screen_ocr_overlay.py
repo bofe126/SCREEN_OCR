@@ -211,6 +211,14 @@ class ScreenOCRTool:
                     if nCode >= 0:
                         kb = ctypes.cast(lParam, ctypes.POINTER(KBDLLHOOKSTRUCT)).contents
                         
+                        # 检查是否按下ESC键 (VK_ESCAPE = 27)
+                        if kb.vkCode == 27 and wParam == win32con.WM_KEYDOWN:
+                            # 清理窗口和状态
+                            self.key_press_time = 0
+                            self.is_processing = False
+                            self.cleanup_pending = True
+                            return user32.CallNextHookEx(None, nCode, wParam, lParam)
+                        
                         hotkey_parts = self.hotkey.lower().split('+')
                         
                         # 获取当前按键的虚拟键码集合
@@ -794,6 +802,13 @@ class ScreenOCRTool:
             canvas.bind('<ButtonRelease-1>', on_mouse_up)
             canvas.bind('<Motion>', on_mouse_move)  # 添加鼠标移动事件
             canvas.bind('<Escape>', lambda e: self.cleanup_windows())
+        
+            # 添加ESC键绑定
+            def on_escape(event=None):
+                self.cleanup_windows()
+                self.is_processing = False
+            
+            self.overlay_window.bind('<Escape>', on_escape)
         
         except Exception as e:
             logging.error(f"显示覆盖层失败: {str(e)}")

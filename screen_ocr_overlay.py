@@ -57,8 +57,7 @@ class ScreenOCRTool:
         self.is_processing: bool = False
         self.current_screenshot = None
         self._running: bool = True
-        self.alt_press_time: float = 0
-        self.event_cycle_active: bool = False
+        self.key_press_time: float = 0
         self.cleanup_pending: bool = False
         
         # 获取系统DPI缩放和屏幕尺寸
@@ -215,13 +214,15 @@ class ScreenOCRTool:
                         if kb.vkCode in current_key_codes:
                             # 按键按下 (WM_KEYDOWN 或 WM_SYSKEYDOWN)
                             if wParam in (win32con.WM_KEYDOWN, win32con.WM_SYSKEYDOWN):
+                                # 新增：如果已经在处理中或事件周期活动中，直接返回
+                                if self.is_processing:
+                                    return user32.CallNextHookEx(None, nCode, wParam, lParam)
                                 # 将按键添加到已按下的按键集合中
                                 self.pressed_keys.add(kb.vkCode)
 
                                 # 只有当所有配置的按键都被按下时才开始计时
                                 if all(any(code in self.pressed_keys for code in self.key_mapping.get(key, [])) for key in hotkey_parts):
-                                    self.alt_press_time = time.time()
-                                    self.event_cycle_active = True
+                                    self.key_press_time = time.time()
                             
                             # 按键松开 (WM_KEYUP 或 WM_SYSKEYUP)
                             elif wParam in (win32con.WM_KEYUP, win32con.WM_SYSKEYUP):
@@ -229,9 +230,9 @@ class ScreenOCRTool:
                                 self.pressed_keys.discard(kb.vkCode)
                                 
                                 # 重置计时器和状态
-                                self.alt_press_time = 0
-                                if not self.is_processing:
-                                    self.event_cycle_active = False
+                                #if not self.is_processing:
+                                self.key_press_time = 0                   
+                                self.is_processing = False
                                 self.cleanup_pending = True
                 except Exception as e:
                     print(f"键盘钩子处理错误: {str(e)}")
@@ -820,10 +821,7 @@ class ScreenOCRTool:
         
         except Exception as e:
             print(f"处理失败: {str(e)}")
-        finally:
-            self.is_processing = False
-            if self.alt_press_time == 0:
-                self.event_cycle_active = False
+
 
     def cleanup_windows(self):
         """清理窗口"""
@@ -838,8 +836,7 @@ class ScreenOCRTool:
                 print("清除当前截图")
                 self.current_screenshot = None
             # 重置处理状态
-            self.is_processing = False
-            self.event_cycle_active = False
+            #self.is_processing = False
             print("窗口清理完成")
         except Exception as e:
             logging.error(f"清理窗口失败: {str(e)}")
@@ -874,10 +871,11 @@ class ScreenOCRTool:
                         self.cleanup_pending = False
 
                     # 检查按键延迟触发
-                    if self.event_cycle_active and self.alt_press_time > 0:
+                    if not self.is_processing and self.key_press_time > 0:
                         current_time = time.time()
-                        if (current_time - self.alt_press_time) * 1000 >= self.trigger_delay_ms:
+                        if (current_time - self.key_press_time) * 1000 >= self.trigger_delay_ms:
                             print(f"触发延迟已到 ({self.trigger_delay_ms}ms)")
+                            print(f"当前状态：{str(self.is_processing)}")
                             # 使用保存的屏幕尺寸
                             self.capture_and_process(self.screen_width, self.screen_height)
                 except Exception as e:

@@ -898,11 +898,18 @@ class ScreenOCRTool:
             
             # 主循环
             while self._running:
-                self.root.update()
-                time.sleep(0.01)  # 减少CPU使用
-            
-        except Exception as e:
-            print(f"运行错误: {str(e)}")
+                try:
+                    self.root.update()
+                    time.sleep(0.01)  # 减少CPU使用
+                except KeyboardInterrupt:
+                    print("接收到退出信号")
+                    self._running = False
+                    break
+                except Exception as e:
+                    print(f"主循环错误: {e}")
+                    if str(e).startswith("invalid command name"):  # Tkinter窗口已关闭
+                        self._running = False
+                    break
         finally:
             print("程序正在退出清理资源...")
             self.cleanup_windows()

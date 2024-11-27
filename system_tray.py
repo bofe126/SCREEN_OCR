@@ -258,7 +258,7 @@ class ConfigDialog:
             variable=self.delay_var,
             command=self.on_scale_change
         )
-        # 添��鼠标点击事件处理
+        # 添加鼠标点击事件处理
         delay_scale.bind('<Button-1>', self.on_scale_click)
         delay_scale.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         
@@ -678,6 +678,7 @@ class SystemTray:
         return pystray.Menu(
             pystray.MenuItem("设置", self.show_config),
             pystray.MenuItem("启动服务", self.toggle_service, checked=lambda item: self.ocr and self.ocr.enabled),
+            pystray.MenuItem("帮助", self.show_help),
             pystray.MenuItem("退出", self.quit)
         )
     
@@ -777,6 +778,90 @@ class SystemTray:
                     self.icon.stop()
                 except:
                     pass
+
+    def show_help(self, icon, item):
+        """触发显示帮助信息"""
+        try:
+            if self.ocr and hasattr(self.ocr, 'config_queue'):
+                self.ocr.config_queue.put(self._create_help_window)
+        except Exception as e:
+            print(f"触发帮助窗口时发生错误: {e}")
+
+    def _create_help_window(self):
+        """在主线程中创建帮助窗口"""
+        try:
+            # 创建帮助窗口
+            help_window = tk.Toplevel()
+            help_window.title("Screen OCR 使用说明")
+            help_window.geometry("500x350")  # 稍微增加窗口高度
+            
+            # 应用现代主题
+            ModernTheme.apply(help_window)
+            
+            # 创建主框架
+            main_frame = ttk.Frame(help_window, padding="30 25 30 25")
+            main_frame.pack(fill=tk.BOTH, expand=True)
+            
+            # 创建标题
+            title_label = ttk.Label(
+                main_frame,
+                text="Screen OCR 使用说明",
+                style="Title.TLabel",
+                font=(ModernTheme.FONT_FAMILY, 20, "bold")
+            )
+            title_label.pack(pady=(0, 20))
+            
+            # 创建文本框
+            text = tk.Text(
+                main_frame,
+                wrap=tk.WORD,
+                font=(ModernTheme.FONT_FAMILY, 11),
+                padx=25,
+                pady=15,
+                border=0,
+                background=ModernTheme.BG_COLOR,
+                foreground=ModernTheme.FG_COLOR
+            )
+            text.pack(fill=tk.BOTH, expand=True)
+            
+            # 定义标签样式
+            text.tag_configure("title", 
+                             font=(ModernTheme.FONT_FAMILY, 13, "bold"),
+                             foreground=ModernTheme.ACCENT_COLOR,
+                             spacing1=15,
+                             spacing3=10)
+            
+            text.tag_configure("bullet",
+                             lmargin1=25,
+                             lmargin2=40)
+            
+            # 插入帮助文本
+            text.insert('end', "使用方法\n", "title")
+            text.insert('end', "• 按住快捷键（默认为ALT）不放，等待屏幕出现蓝色边框\n", "bullet")
+            text.insert('end', "• 继续按住直到识别完成（绿色边框）\n", "bullet")
+            text.insert('end', "• 拖动鼠标选择需要的文本，自动复制到剪贴板\n", "bullet")
+            text.insert('end', "• 松开快捷键即可退出\n\n", "bullet")
+            
+            text.insert('end', "设置说明\n", "title")
+            text.insert('end', "• 在设置中可自定义快捷键（支持组合键如CTRL+SHIFT）\n", "bullet")
+            text.insert('end', "• 可选择OCR引擎和调整触发延时\n", "bullet")
+            
+            text.config(state='disabled')  # 设置为只读
+            
+            # 居中显示窗口
+            help_window.update_idletasks()
+            width = help_window.winfo_width()
+            height = help_window.winfo_height()
+            x = (help_window.winfo_screenwidth() // 2) - (width // 2)
+            y = (help_window.winfo_screenheight() // 2) - (height // 2)
+            help_window.geometry(f'+{x}+{y}')
+            
+            # 设置窗口置顶
+            help_window.lift()
+            help_window.focus_force()
+            
+        except Exception as e:
+            print(f"创建帮助窗口时发生错误: {e}")
 
 if __name__ == "__main__":
     tray = SystemTray()

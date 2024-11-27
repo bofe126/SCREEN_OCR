@@ -655,7 +655,7 @@ class ScreenOCRTool:
             # 创建画布 - 根据是否有文本块决定边框颜色
             canvas = tk.Canvas(
                 self.overlay_window,
-                highlightthickness=2,  # 设置边框宽度
+                highlightthickness=4,  # 将边框宽度从2增加到4
                 highlightbackground="#3498db" if not text_blocks else "#00FF00",  # 等待时蓝色，完成时绿色
                 highlightcolor="#3498db" if not text_blocks else "#00FF00",  # 保持一致的颜色
                 bg='white',
@@ -674,6 +674,32 @@ class ScreenOCRTool:
                 photo = ImageTk.PhotoImage(self.current_screenshot)
                 canvas.photo = photo
                 canvas.create_image(0, 0, image=photo, anchor='nw')
+                
+                # 如果是等待状态，显示提示文本
+                if not text_blocks:
+                    # 计算屏幕中心位置
+                    center_x = screen_width / 2
+                    center_y = screen_height / 2
+                    
+                    # 创建半透明背景
+                    bg_height = 40
+                    bg_y1 = center_y - bg_height/2
+                    bg_y2 = center_y + bg_height/2
+                    canvas.create_rectangle(
+                        0, bg_y1, screen_width, bg_y2,
+                        fill='black',
+                        stipple='gray50',  # 创建半透明效果
+                        tags='waiting_bg'
+                    )
+                    
+                    # 显示等待文本
+                    canvas.create_text(
+                        center_x, center_y,
+                        text="识别中，请稍后...",
+                        font=('Microsoft YaHei UI', 16),
+                        fill='white',
+                        tags='waiting_text'
+                    )
             
             # 显示窗口
             self.overlay_window.deiconify()

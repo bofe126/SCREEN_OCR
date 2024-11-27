@@ -869,6 +869,10 @@ class ScreenOCRTool:
         try:
             def check_state():
                 try:
+                    if not self._running:
+                        self.root.quit()
+                        return
+                    
                     # 检查配置队列
                     while not self.config_queue.empty():
                         task = self.config_queue.get_nowait()
@@ -886,14 +890,13 @@ class ScreenOCRTool:
                         if (current_time - self.key_press_time) * 1000 >= self.trigger_delay_ms:
                             print(f"触发延迟已到 ({self.trigger_delay_ms}ms)")
                             print(f"当前状态：{str(self.is_processing)}")
-                            # 使用保存的屏幕尺寸
                             self.capture_and_process(self.screen_width, self.screen_height)
                 except Exception as e:
                     print(f"状态检查错误: {str(e)}")
                 finally:
                     if self._running:
-                        self.root.after(50, check_state)  # 每50ms检查一次
-            
+                        self.root.after(50, check_state)
+        
             # 启动状态检查
             self.root.after(50, check_state)
             
@@ -906,21 +909,41 @@ class ScreenOCRTool:
             tray_thread.daemon = True
             tray_thread.start()
             
-            # 使用Tkinter的主循环
-            self.root.mainloop()
+            # 设置程序退出处理
+            def on_closing():
+                self._running = False
+                self.cleanup()
+                self.root.quit()
             
+            # 设置窗口关闭协议和键盘中断处理
+            self.root.protocol("WM_DELETE_WINDOW", on_closing)
+            
+            def handle_interrupt(event=None):
+                on_closing()
+            
+            # 绑定 Ctrl+C 事件
+            self.root.bind_all('<Control-c>', handle_interrupt)
+            
+            # 使用Tkinter的主循环
+            while self._running:
+                try:
+                    self.root.update()
+                    time.sleep(0.01)
+                except KeyboardInterrupt:
+                    print("\n接收到退出信号")
+                    on_closing()
+                    break
+                except Exception as e:
+                    if str(e).startswith("invalid command name"):  # Tkinter窗口已关闭
+                        break
+                    print(f"主循环错误: {str(e)}")
+        
         except Exception as e:
             print(f"运行错误: {str(e)}")
-
         finally:
+            self._running = False
             print("程序正在退出清理资源...")
-            self.cleanup_windows()
-            self.cleanup_hook()
-            if self.root:
-                try:
-                    self.root.destroy()
-                except:
-                    pass
+            self.cleanup()
             print("程序退出完成")
     
     def reload_config(self):
@@ -958,10 +981,15 @@ class ScreenOCRTool:
         print(f"服务状态已切换为: {'启用' if self.enabled else '禁用'}")
     
     def cleanup(self):
-        """清理资源"""
+        """清理所有资源"""
         self._running = False
         self.cleanup_windows()
         self.cleanup_hook()
+        if hasattr(self, 'tray'):
+            try:
+                self.tray.icon.stop()
+            except:
+                pass
 
 if __name__ == '__main__':
     tool = ScreenOCRTool()

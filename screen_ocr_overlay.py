@@ -82,11 +82,20 @@ class ScreenOCRTool:
         # 添加选择模式配置
         self.selection_mode: str = 'text'  # 'text' 或 'region'
         
+        # 从配置文件加载配置
+        try:
+            from system_tray import SystemTray
+            self.tray = SystemTray(self)
+            self.config = self.tray.load_config()
+        except Exception as e:
+            print(f"加载配置失败，使用默认配置: {str(e)}")
+            self.config = self.DEFAULT_CONFIG.copy()
+        
         # 初始化OCR相关属性
         self._paddle_ocr = None
-        self._ocr_engine: str = self.DEFAULT_CONFIG["ocr_engine"]
-        self.trigger_delay_ms: int = self.DEFAULT_CONFIG["trigger_delay_ms"]
-        self.hotkey: str = self.DEFAULT_CONFIG["hotkey"]
+        self._ocr_engine: str = self.config.get("ocr_engine", self.DEFAULT_CONFIG["ocr_engine"])
+        self.trigger_delay_ms: int = self.config.get("trigger_delay_ms", self.DEFAULT_CONFIG["trigger_delay_ms"])
+        self.hotkey: str = self.config.get("hotkey", self.DEFAULT_CONFIG["hotkey"])
         self.pressed_keys: set = set()
 
         # 定义虚拟键码映射
@@ -214,8 +223,8 @@ class ScreenOCRTool:
                         if kb.vkCode in current_key_codes:
                             # 按键按下 (WM_KEYDOWN 或 WM_SYSKEYDOWN)
                             if wParam in (win32con.WM_KEYDOWN, win32con.WM_SYSKEYDOWN):
-                                # 新增：如果已经在处理中或事件周期活动中，直接返回
-                                if self.is_processing:
+                                # 移除对 is_processing 的检查，只保留事件周期检查
+                                if self.key_press_time > 0:
                                     return user32.CallNextHookEx(None, nCode, wParam, lParam)
                                 # 将按键添加到已按下的按键集合中
                                 self.pressed_keys.add(kb.vkCode)
@@ -230,7 +239,6 @@ class ScreenOCRTool:
                                 self.pressed_keys.discard(kb.vkCode)
                                 
                                 # 重置计时器和状态
-                                #if not self.is_processing:
                                 self.key_press_time = 0                   
                                 self.is_processing = False
                                 self.cleanup_pending = True
@@ -469,7 +477,7 @@ class ScreenOCRTool:
         prev_char = prev_text[-1]
         next_char = next_text[0]
         
-        # 如果任一字符是标点，不添加空格
+        # 如果任一字符是标点不添加空格
         if prev_char in punctuation or next_char in punctuation:
             return False
         
@@ -644,14 +652,16 @@ class ScreenOCRTool:
             self.overlay_window.grid_rowconfigure(0, weight=1)
             self.overlay_window.grid_columnconfigure(0, weight=1)
             
-            # 创建画布
+            # 创建画布 - 根据是否有文本块决定边框颜色
             canvas = tk.Canvas(
                 self.overlay_window,
-                highlightthickness=0,
+                highlightthickness=2,  # 设置边框宽度
+                highlightbackground="#3498db" if not text_blocks else "#00FF00",  # 等待时蓝色，完成时绿色
+                highlightcolor="#3498db" if not text_blocks else "#00FF00",  # 保持一致的颜色
                 bg='white',
                 width=screen_width,
                 height=screen_height,
-                cursor='wait' if not text_blocks else 'arrow'  # 根据是否有文本块决定光标样式
+                cursor='wait' if not text_blocks else 'arrow'
             )
             canvas.grid(row=0, column=0, sticky='nsew')
             
@@ -896,10 +906,8 @@ class ScreenOCRTool:
             tray_thread.daemon = True
             tray_thread.start()
             
-            # 主循环
-            while self._running:
-                self.root.update()
-                time.sleep(0.01)  # 减少CPU使用
+            # 使用Tkinter的主循环
+            self.root.mainloop()
             
         except Exception as e:
             print(f"运行错误: {str(e)}")

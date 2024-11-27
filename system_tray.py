@@ -243,17 +243,35 @@ class ConfigDialog:
         delay_label.grid(row=current_row, column=0, sticky="w", pady=(0, 5))
         current_row += 1
         
-        self.delay_var = tk.StringVar(value=str(self.config.get("trigger_delay_ms", self.default_config["trigger_delay_ms"])))
-        delay_spin = ttk.Spinbox(main_frame, 
-                               from_=0, 
-                               to=1000, 
-                               increment=50,
-                               textvariable=self.delay_var,
-                               font=ModernTheme.NORMAL_FONT)
-        if self.delay_var.get() == "300":
-            delay_spin.delete(0, tk.END)
-            delay_spin.insert(0, "300 (默认)")
-        delay_spin.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
+        # 创建延时设置的容器框架
+        delay_frame = ttk.Frame(main_frame)
+        delay_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
+        delay_frame.columnconfigure(0, weight=1)  # 让滑块占据主要空间
+        
+        # 创建滑块
+        self.delay_var = tk.IntVar(value=self.config.get("trigger_delay_ms", self.default_config["trigger_delay_ms"]))
+        delay_scale = ttk.Scale(
+            delay_frame,
+            from_=0,
+            to=1000,
+            orient="horizontal",
+            variable=self.delay_var,
+            command=self.on_scale_change
+        )
+        # 添��鼠标点击事件处理
+        delay_scale.bind('<Button-1>', self.on_scale_click)
+        delay_scale.grid(row=0, column=0, sticky="ew", padx=(0, 10))
+        
+        # 创建数值显示框
+        self.delay_display = ttk.Label(
+            delay_frame,
+            text=f"{self.delay_var.get()} ms",
+            width=8,  # 改回8，因为只显示数值和单位
+            anchor="e",
+            font=ModernTheme.NORMAL_FONT
+        )
+        self.delay_display.grid(row=0, column=1, sticky="e")
+        
         current_row += 1
         
         # 快捷键设置
@@ -261,12 +279,27 @@ class ConfigDialog:
         hotkey_label.grid(row=current_row, column=0, sticky="w", pady=(0, 5))
         current_row += 1
         
+        # 创建快捷键输入框架
+        hotkey_frame = ttk.Frame(main_frame)
+        hotkey_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
+        
+        # 创建快捷键显示/输入标签
         self.hotkey_var = tk.StringVar(value=self.config.get("hotkey", self.default_config["hotkey"]).upper())
-        self.hotkey_button = ttk.Button(main_frame, 
-                                      text=f"{self.hotkey_var.get()} (点击修改)", 
-                                      command=self.record_hotkey,
-                                      style="TButton")
-        self.hotkey_button.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
+        self.hotkey_label = ttk.Label(
+            hotkey_frame,
+            text=f"{self.hotkey_var.get()}",
+            font=ModernTheme.NORMAL_FONT,
+            background=ModernTheme.BG_COLOR,
+            foreground=ModernTheme.ACCENT_COLOR,
+            padding=(5, 2)
+        )
+        self.hotkey_label.grid(row=0, column=0, sticky="w")
+        hotkey_frame.columnconfigure(0, weight=1)
+        
+        # 绑定事件
+        self.hotkey_label.bind('<Button-1>', self.start_hotkey_record)
+        self.recording_hotkey = False
+        
         current_row += 1
         
         # 分隔线
@@ -299,78 +332,80 @@ class ConfigDialog:
         # 保存当前行号，用于调试框的位置
         self.last_row = current_row
 
-        # 按钮容器
-        button_frame = ttk.Frame(main_frame)
-        button_frame.grid(row=current_row + 1, column=0, sticky="e", pady=(25, 0))
+        # 为其他控件添加变更事件处理
+        engine_combo.bind('<<ComboboxSelected>>', lambda e: self.update_config())
         
-        # 按钮
-        cancel_btn = ttk.Button(button_frame, text="取消", command=self.on_closing)
-        cancel_btn.pack(side="right", padx=(0, 5))
+        # 自动复制选项变更事件
+        auto_copy_cb.configure(command=self.update_config)
         
-        save_btn = ttk.Button(button_frame, text="保存", command=self.save_config)
-        save_btn.pack(side="right")
+        # 调试显示选项变更事件
+        show_debug_cb.configure(command=lambda: (self.toggle_debug_log(), self.update_config()))
     
-    def record_hotkey(self):
-        """记录快捷键"""
-        self.hotkey_button.configure(text="请按下快捷键...")
-        self.root.update()
-        
-        # 创建一个新窗口来捕获按键
-        dialog = tk.Toplevel(self.root)
-        dialog.title("设置快捷键")
-        dialog.geometry("300x150")
-        dialog.transient(self.root)  # 设置为主窗口的临时窗口
-        dialog.grab_set()  # 模态窗口
-        
-        # 当前按下的键
-        pressed_keys = set()
+    def start_hotkey_record(self, event):
+        """开始记录快捷键"""
+        if not self.recording_hotkey:
+            self.recording_hotkey = True
+            self.hotkey_label.configure(text="按下快捷键组合...", background=ModernTheme.HOVER_COLOR)
+            self.pressed_keys = set()
+            
+            # 绑定键盘事件到主窗口
+            self.root.bind('<KeyPress>', self.on_hotkey_press)
+            self.root.bind('<KeyRelease>', self.on_hotkey_release)
+            self.hotkey_label.focus_set()
+
+    def on_hotkey_press(self, event):
+        """处理按键按下事件"""
+        if not self.recording_hotkey:
+            return
+            
         key_names = {
-            16: 'SHIFT',
-            17: 'CTRL',
-            18: 'ALT',
-            91: 'WIN',
+            16: 'SHIFT', 17: 'CTRL', 18: 'ALT', 91: 'WIN',
+            # 可以添加更多特殊键
         }
         
-        label = ttk.Label(dialog, text="请按下快捷键组合\n支持 CTRL、ALT、SHIFT、WIN 等组合键", justify="center")
-        label.pack(pady=20)
+        key = event.keycode
+        if key in key_names:
+            self.pressed_keys.add(key_names[key])
+        else:
+            key_char = event.char.upper()
+            if key_char and key_char.isprintable():
+                self.pressed_keys.add(key_char)
         
-        key_label = ttk.Label(dialog, text="", justify="center")
-        key_label.pack(pady=10)
-        
-        def on_key_down(event):
-            key = event.keycode
-            if key in key_names:
-                pressed_keys.add(key_names[key])
-            else:
-                key_char = event.char.upper()
-                if key_char and key_char.isprintable():
-                    pressed_keys.add(key_char)
+        if self.pressed_keys:
+            key_text = "+".join(sorted(self.pressed_keys))
+            self.hotkey_label.configure(text=key_text)
+
+    def on_hotkey_release(self, event):
+        """处理按键释放事件"""
+        if not self.recording_hotkey:
+            return
             
-            # 更新显示
-            if pressed_keys:
-                key_text = "+".join(sorted(pressed_keys))
-                key_label.configure(text=key_text)
+        key_names = {
+            16: 'SHIFT', 17: 'CTRL', 18: 'ALT', 91: 'WIN',
+        }
         
-        def on_key_up(event):
-            key = event.keycode
-            if key in key_names and key_names[key] in pressed_keys:
-                pressed_keys.remove(key_names[key])
-            else:
-                key_char = event.char.upper()
-                if key_char and key_char.isprintable() and key_char in pressed_keys:
-                    pressed_keys.remove(key_char)
+        key = event.keycode
+        if key in key_names and key_names[key] in self.pressed_keys:
+            self.pressed_keys.remove(key_names[key])
+        else:
+            key_char = event.char.upper()
+            if key_char and key_char.isprintable() and key_char in self.pressed_keys:
+                self.pressed_keys.remove(key_char)
+        
+        # 如果所有键都释放了，完成快捷键设置
+        if not self.pressed_keys:
+            self.recording_hotkey = False
+            hotkey = self.hotkey_label.cget("text")
+            if hotkey and hotkey != "按下快捷键组合...":
+                self.hotkey_var.set(hotkey)
+                # 实时更新配置
+                self.update_config()
             
-            # 如果所有键都释放了，保存组合键
-            if not pressed_keys:
-                hotkey = key_label.cget("text")
-                if hotkey:
-                    self.hotkey_var.set(hotkey)
-                    self.hotkey_button.configure(text=f"{hotkey} (点击修改)")
-                dialog.destroy()
-        
-        dialog.bind('<KeyPress>', on_key_down)
-        dialog.bind('<KeyRelease>', on_key_up)
-        dialog.focus_set()
+            # 恢复标签样式
+            self.hotkey_label.configure(background=ModernTheme.BG_COLOR)
+            # 解绑键盘事件
+            self.root.unbind('<KeyPress>')
+            self.root.unbind('<KeyRelease>')
     
     def toggle_debug_log(self):
         if self.show_debug_var.get():
@@ -421,20 +456,50 @@ class ConfigDialog:
         # 设置窗口位置
         self.root.geometry(f"+{x}+{y}")
 
-    def save_config(self):
+    def update_config(self):
+        """实时更新配置"""
         self.config.update({
             "ocr_engine": self.engine_var.get(),
-            "trigger_delay_ms": int(self.delay_var.get().split()[0]),  # 移除默认值显示
+            "trigger_delay_ms": self.delay_var.get(),
             "hotkey": self.hotkey_var.get(),
             "auto_copy": self.auto_copy_var.get(),
             "show_debug": self.show_debug_var.get(),
             "debug_log": self.debug_text.get('1.0', 'end-1c') if self.show_debug_var.get() else ""
         })
+        # 调用回调函数实时更新配置
         self.callback(self.config)
-        if self.root and self.root.winfo_exists():
-            self.root.quit()
-            self.root.destroy()
-            self.root = None
+
+    def on_scale_change(self, value):
+        """处理滑块值变化"""
+        # 将当前值调整到最近的50的倍数
+        current_value = int(float(value))
+        snapped_value = round(current_value / 50) * 50
+        
+        # 如果值发生了变化，更新滑块和配置
+        if self.delay_var.get() != snapped_value:
+            self.delay_var.set(snapped_value)
+            self.delay_display.configure(text=f"{snapped_value} ms")
+            # 实时更新配置
+            self.update_config()
+
+    def on_scale_click(self, event):
+        """处理滑块点击事件"""
+        scale = event.widget
+        # 计算点击位置对应的值
+        clicked_value = scale.get()
+        if event.x < 0:
+            clicked_value = scale.cget('from')
+        elif event.x > scale.winfo_width():
+            clicked_value = scale.cget('to')
+        else:
+            clicked_value = (event.x / scale.winfo_width()) * (scale.cget('to') - scale.cget('from'))
+        
+        # 调整到最近的50的倍数
+        snapped_value = round(clicked_value / 50) * 50
+        self.delay_var.set(snapped_value)
+        self.delay_display.configure(text=f"{snapped_value} ms")
+        # 添加实时配置更新
+        self.update_config()
 
     def show(self):
         """显示配置对话框"""
@@ -518,15 +583,6 @@ class SystemTray:
         try:
             self.config = new_config
             self.save_config()
-            # 清理对话框引用
-            if self.dialog:
-                if hasattr(self.dialog, 'root') and self.dialog.root:
-                    try:
-                        self.dialog.root.quit()
-                        self.dialog.root.destroy()
-                    except:
-                        pass
-                self.dialog = None
         except Exception as e:
             print(f"保存配置时发生错误: {e}")
 

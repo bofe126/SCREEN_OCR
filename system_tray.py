@@ -3,12 +3,14 @@ import json
 import tkinter as tk
 from tkinter import ttk, scrolledtext
 import pystray
-from PIL import Image, ImageDraw, ImageTk
+from PIL import Image, ImageDraw, ImageFont, ImageTk
 import ctypes
 from keyboard import read_hotkey
 import queue
 import threading
 import win32api
+from cairosvg import svg2png
+from io import BytesIO
 
 class HighDPIApp:
     """高DPI支持"""
@@ -537,30 +539,61 @@ class SystemTray:
             print(f"触发配置窗口时发生错误: {e}")
 
     def create_icon(self):
-        """创建系统托盘图标"""
-        # 创建一个 22x22 的图标
-        width = 22
-        height = 22
-        
-        # 创建一个新的图像，使用透明背景
+        """从SVG文件创建系统托盘图标"""
+        try:
+            from cairosvg import svg2png
+            from io import BytesIO
+            
+            # 读取SVG文件
+            icon_path = os.path.join(os.path.dirname(__file__), 'icon.svg')
+            with open(icon_path, 'rb') as f:
+                svg_data = f.read()
+            
+            # 转换为PNG，稍微放大以适应背景
+            png_data = svg2png(bytestring=svg_data, output_width=20, output_height=20)
+            
+            # 创建带有白色背景的新图像
+            background = Image.new('RGBA', (24, 24), color=(0, 0, 0, 0))
+            
+            # 创建圆角矩形遮罩
+            mask = Image.new('L', (24, 24), 0)
+            mask_draw = ImageDraw.Draw(mask)
+            mask_draw.rounded_rectangle([0, 0, 23, 23], radius=4, fill=255)  # 圆角从6改为4
+            
+            # 创建白色背景层
+            white_bg = Image.new('RGBA', (24, 24), color='white')
+            background.paste(white_bg, mask=mask)
+            
+            # 加载SVG图像并居中放置
+            icon = Image.open(BytesIO(png_data))
+            icon_x = (24 - icon.width) // 2
+            icon_y = (24 - icon.height) // 2
+            background.paste(icon, (icon_x, icon_y), icon)
+            
+            return background
+            
+        except Exception as e:
+            print(f"加载SVG图标失败: {e}")
+            # 如果加载失败，使用默认图标
+            return self._create_default_icon()
+            
+    def _create_default_icon(self):
+        """创建默认的备用图标"""
+        width = 24
+        height = 24
         image = Image.new('RGBA', (width, height), color=(0, 0, 0, 0))
         draw = ImageDraw.Draw(image)
         
-        # 绘制一个简单的 "OCR" 图标
-        # 外圆
-        margin = 2
-        draw.ellipse([margin, margin, width-margin, height-margin],
-                    outline=(52, 152, 219),  # 使用现代蓝色
-                    width=2)
+        # 使用简单的蓝色背景
+        bg_color = (41, 128, 185)
+        draw.rectangle([0, 0, width, height], fill=bg_color)
         
         # 添加文字
-        from PIL import ImageFont
         try:
             font = ImageFont.truetype("arial.ttf", 10)
         except:
             font = ImageFont.load_default()
-            
-        # 在圆圈中央绘制 "OCR" 文字
+        
         text = "OCR"
         text_bbox = draw.textbbox((0, 0), text, font=font)
         text_width = text_bbox[2] - text_bbox[0]
@@ -568,10 +601,10 @@ class SystemTray:
         
         x = (width - text_width) // 2
         y = (height - text_height) // 2
-        draw.text((x, y), text, fill=(52, 152, 219), font=font)
+        draw.text((x, y), text, fill='white', font=font)
         
         return image
-    
+
     def toggle_service(self, icon, item):
         """切换OCR服务状态"""
         if self.ocr:

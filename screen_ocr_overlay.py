@@ -911,6 +911,7 @@ class ScreenOCRTool:
             
         except Exception as e:
             print(f"运行错误: {str(e)}")
+
         finally:
             print("程序正在退出清理资源...")
             self.cleanup_windows()

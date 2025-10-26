@@ -63,12 +63,14 @@ class ScreenOCRTool:
         # 获取系统DPI缩放和屏幕尺寸
         self.dpi_scale: float = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
         
-        # 使用tkinter获取实际屏幕尺寸
-        self.screen_width = self.root.winfo_screenwidth()
-        self.screen_height = self.root.winfo_screenheight()
+        # 使用 Win32 API 获取物理屏幕尺寸（与截图保持一致）
+        monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromPoint((0,0)))
+        monitor_area = monitor_info["Monitor"]
+        self.screen_width = monitor_area[2] - monitor_area[0]
+        self.screen_height = monitor_area[3] - monitor_area[1]
         
         print(f"系统DPI缩放: {self.dpi_scale}")
-        print(f"屏幕尺寸: {self.screen_width}x{self.screen_height}")
+        print(f"屏幕尺寸（物理像素）: {self.screen_width}x{self.screen_height}")
         
         # 设置键盘钩子
         self.keyboard_hook_id = None
@@ -155,7 +157,16 @@ class ScreenOCRTool:
         if self._paddle_ocr is None and self._ocr_engine == "PaddleOCR":
             import logging
             logging.getLogger("ppocr").setLevel(logging.WARNING)  # 设置日志级别为WARNING
-            self._paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)  # 关闭PaddleOCR的日志
+            print("正在初始化PaddleOCR（轻量级移动端模型）...")
+            # 使用PP-OCRv4的轻量级移动端模型，速度更快
+            # 新版本PaddleOCR使用device参数控制CPU/GPU
+            self._paddle_ocr = PaddleOCR(
+                use_textline_orientation=True,  # 启用文本方向检测
+                lang="ch",  # 中文
+                ocr_version='PP-OCRv4',  # 使用v4版本（比v5服务器版本更快）
+                device='cpu'  # 使用CPU（桌面应用推荐）
+            )
+            print("PaddleOCR初始化完成")
         return self._paddle_ocr
 
     def validate_config(self, config: dict) -> bool:
@@ -185,7 +196,7 @@ class ScreenOCRTool:
             # 根据配置初始化OCR引擎
             if self._ocr_engine == "PaddleOCR":
                 print("初始化PaddleOCR引擎...")
-                self._paddle_ocr = PaddleOCR(use_angle_cls=True, lang="ch", show_log=False)
+                self._paddle_ocr = PaddleOCR(use_textline_orientation=True, lang="ch")
             print(f"OCR引擎已设置为: {self._ocr_engine}")
         except Exception as e:
             print(f"初始化OCR引擎失败: {str(e)}")
@@ -316,10 +327,6 @@ class ScreenOCRTool:
             real_width = monitor_area[2] - monitor_area[0]
             real_height = monitor_area[3] - monitor_area[1]
             
-            print(f"\n=== 屏幕捕获参数 ===")
-            print(f"显示器区域: {monitor_area}")
-            print(f"实际捕获尺寸: {real_width}x{real_height}")
-            
             # 获取整个桌面窗口
             hwnd = win32gui.GetDesktopWindow()
             hwndDC = win32gui.GetWindowDC(hwnd)
@@ -347,9 +354,6 @@ class ScreenOCRTool:
                 bmpstr, 'raw', 'BGRX', 0, 1
             )
             
-            print(f"最终截图尺寸: {image.size}")
-            print(f"图像模式: {image.mode}")
-            print(f"图像像素: {image.size[0] * image.size[1]}")
             return image
         except Exception as e:
             logging.error(f"屏幕捕获失败: {str(e)}")
@@ -385,28 +389,34 @@ class ScreenOCRTool:
             
             result = []
             # 进行OCR识别
-            ocr_result = self.paddle_ocr.ocr(image, cls=True)
+            ocr_result = self.paddle_ocr.predict(image)
             
-            for line in ocr_result:
-                for word_info in line:
-                    # 获取坐标和文本
-                    box = word_info[0]  # 四个角点坐标
-                    text = word_info[1][0]  # 文本内容
-                    confidence = word_info[1][1]  # 置信度
+            if ocr_result is None:
+                return []
+            
+            # 遍历所有图像的结果（通常只有一张图）
+            for img_idx, ocr_res in enumerate(ocr_result):
+                # OCRResult对象有特定的属性来访问识别结果
+                if hasattr(ocr_res, 'boxes'):
+                    boxes = ocr_res.boxes
+                    texts = ocr_res.rec_text if hasattr(ocr_res, 'rec_text') else []
+                    scores = ocr_res.rec_score if hasattr(ocr_res, 'rec_score') else []
                     
-                    # 计算边界框
-                    x1 = min(point[0] for point in box)
-                    y1 = min(point[1] for point in box)
-                    x2 = max(point[0] for point in box)
-                    y2 = max(point[1] for point in box)
+                    for i, (box, text, score) in enumerate(zip(boxes, texts, scores)):
+                        
+                        # box是numpy数组，格式为 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                        x1 = float(min(point[0] for point in box))
+                        y1 = float(min(point[1] for point in box))
+                        x2 = float(max(point[0] for point in box))
+                        y2 = float(max(point[1] for point in box))
                     
                     # 计算每个字符的宽度
                     if len(text) > 0:
                         char_width = (x2 - x1) / len(text)
                         
                         # 为每个字符创建单独的文本块
-                        for i, char in enumerate(text):
-                            char_x = x1 + i * char_width
+                        for j, char in enumerate(text):
+                            char_x = x1 + j * char_width
                             result.append({
                                 'text': char,
                                 'x': int(char_x),
@@ -414,6 +424,36 @@ class ScreenOCRTool:
                                 'width': int(char_width),
                                 'height': int(y2 - y1)
                             })
+                else:
+                    # OCRResult对象是一个字典，包含所有OCR结果
+                    boxes = ocr_res.get('dt_polys') or ocr_res.get('rec_polys')
+                    texts = ocr_res.get('rec_texts')
+                    scores = ocr_res.get('rec_scores')
+                    
+                    if boxes and texts:
+                        for i, (box, text) in enumerate(zip(boxes, texts)):
+                            score = scores[i] if scores and i < len(scores) else 1.0
+                            
+                            # box是numpy数组，格式为 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
+                            x1 = float(min(point[0] for point in box))
+                            y1 = float(min(point[1] for point in box))
+                            x2 = float(max(point[0] for point in box))
+                            y2 = float(max(point[1] for point in box))
+                            
+                            # 计算每个字符的宽度
+                            if len(text) > 0:
+                                char_width = (x2 - x1) / len(text)
+                                
+                                # 为每个字符创建单独的文本块
+                                for j, char in enumerate(text):
+                                    char_x = x1 + j * char_width
+                                    result.append({
+                                        'text': char,
+                                        'x': int(char_x),
+                                        'y': int(y1),
+                                        'width': int(char_width),
+                                        'height': int(y2 - y1)
+                                    })
             
             return result
             
@@ -451,9 +491,9 @@ class ScreenOCRTool:
                             result.append({
                                 'text': char,
                                 'x': int(char_x),
-                                'y': y1,
+                                'y': int(y1),
                                 'width': int(char_width),
-                                'height': y2 - y1
+                                'height': int(y2 - y1)
                             })
             
             return result
@@ -629,21 +669,13 @@ class ScreenOCRTool:
                 except:
                     pass
             
-            print("\n=== 显示覆盖层 ===")
-            print(f"屏幕尺寸: {self.screen_width}x{self.screen_height}")
-            if self.current_screenshot:
-                print(f"截图尺寸: {self.current_screenshot.size}")
-            
             # 获取当前屏幕的完整区域
             monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromPoint((0,0)))
             monitor_area = monitor_info["Monitor"]
-            screen_x = monitor_area[0]
-            screen_y = monitor_area[1]
+            self.screen_x = monitor_area[0]  # 保存为实例变量
+            self.screen_y = monitor_area[1]  # 保存为实例变量
             screen_width = monitor_area[2] - monitor_area[0]
             screen_height = monitor_area[3] - monitor_area[1]
-            
-            print(f"显示器区域: {monitor_area}")
-            print(f"窗口位置和大小: {screen_width}x{screen_height}+{screen_x}+{screen_y}")
             
             # 创建新窗口
             self.overlay_window = tk.Toplevel()
@@ -654,7 +686,7 @@ class ScreenOCRTool:
             self.overlay_window.overrideredirect(True)  # 移除窗口边框
             
             # 设置窗口大小和位置以覆盖整个屏幕
-            self.overlay_window.geometry(f"{screen_width}x{screen_height}+{screen_x}+{screen_y}")
+            self.overlay_window.geometry(f"{screen_width}x{screen_height}+{self.screen_x}+{self.screen_y}")
             
             # 配置grid布局
             self.overlay_window.grid_rowconfigure(0, weight=1)
@@ -675,10 +707,6 @@ class ScreenOCRTool:
             
             # 显示截图作为背景
             if self.current_screenshot:
-                # 确保截图大小与窗口匹配
-                if self.current_screenshot.size != (screen_width, screen_height):
-                    print(f"调整截图大小从 {self.current_screenshot.size} 到 {screen_width}x{screen_height}")
-                    self.current_screenshot = self.current_screenshot.resize((screen_width, screen_height))
                 photo = ImageTk.PhotoImage(self.current_screenshot)
                 canvas.photo = photo
                 canvas.create_image(0, 0, image=photo, anchor='nw')
@@ -724,11 +752,14 @@ class ScreenOCRTool:
             self.selected_blocks = set()
             
             # 存储文本块信息
+            # 注意：Canvas 的 highlightthickness 会影响内容区域
+            # 但由于我们使用 create_image(0, 0, anchor='nw')，图像从 (0,0) 开始
+            # 边框在外部，不影响内部坐标系统，所以不需要偏移补偿
             for i, block in enumerate(text_blocks):
                 self.text_blocks[i] = {
                     'text': block['text'],
-                    'x': block['x'],
-                    'y': block['y'],
+                    'x': block['x'],  # 直接使用 OCR 坐标
+                    'y': block['y'],  # 直接使用 OCR 坐标
                     'width': block['width'],
                     'height': block['height'],
                     'selected': False
@@ -777,7 +808,6 @@ class ScreenOCRTool:
                     if text:
                         self.root.clipboard_clear()
                         self.root.clipboard_append(text)
-                        print(f"已复制文本:\n{text}")
             
                 self.selection_start = None
             
@@ -817,14 +847,10 @@ class ScreenOCRTool:
     def capture_and_process(self, width, height):
         """捕获并处理屏幕"""
         if self.is_processing:
-            print("已有处理进行中，跳过本次请求")
             return
         
         try:
             self.is_processing = True
-            print(f"\n=== 开始截图 ===")
-            print(f"请求的屏幕大小: {width}x{height}")
-            print(f"当前屏幕大小: {self.screen_width}x{self.screen_height}")
             
             # 确保使用当前屏幕尺寸
             width = self.screen_width
@@ -837,7 +863,6 @@ class ScreenOCRTool:
             
             self.current_screenshot = self.capture_screen_region(width, height)
             if not self.current_screenshot:
-                print("截图失败")
                 return
             
             # 创建新窗口并显示等待光标
@@ -850,12 +875,10 @@ class ScreenOCRTool:
                         widget.configure(cursor='wait')
                 self.overlay_window.update_idletasks()
             
-            print("开始OCR识别...")
             text_blocks = self.get_text_positions(self.current_screenshot)
             
             # OCR识别完成后显示结果
             if text_blocks:
-                print(f"识别到{len(text_blocks)}个文本块，开始显示...")
                 # 销毁当前的等待窗口
                 if hasattr(self, 'overlay_window') and self.overlay_window:
                     self.overlay_window.destroy()
@@ -863,7 +886,6 @@ class ScreenOCRTool:
                 # 创建新的结果显示窗口
                 self.show_overlay_text(text_blocks)
             else:
-                print("未识别到文本")
                 # 即使没有识别到文本，也更新覆盖层状态
                 if hasattr(self, 'overlay_window') and self.overlay_window:
                     for widget in self.overlay_window.winfo_children():
@@ -871,27 +893,19 @@ class ScreenOCRTool:
                             widget.configure(cursor='arrow')
         
         except Exception as e:
-            print(f"处理失败: {str(e)}")
+            logging.error(f"处理失败: {str(e)}")
 
 
     def cleanup_windows(self):
         """清理窗口"""
         try:
-            print("\n=== 清理窗口 ===")
             if hasattr(self, 'overlay_window') and self.overlay_window:
-                print("正在销毁overlay_window")
                 self.overlay_window.destroy()
-                self.overlay_window = None  # 确保引用被清除
-                print("overlay_window已销毁")
+                self.overlay_window = None
             if self.current_screenshot:
-                print("清除当前截图")
                 self.current_screenshot = None
-            # 重置处理状态
-            #self.is_processing = False
-            print("窗口清理完成")
         except Exception as e:
             logging.error(f"清理窗口失败: {str(e)}")
-            print(f"清理窗口时发生错误: {str(e)}")
 
     def cleanup_hook(self):
         """清理键盘钩子"""
@@ -929,11 +943,9 @@ class ScreenOCRTool:
                     if not self.is_processing and self.key_press_time > 0:
                         current_time = time.time()
                         if (current_time - self.key_press_time) * 1000 >= self.trigger_delay_ms:
-                            print(f"触发延迟已到 ({self.trigger_delay_ms}ms)")
-                            print(f"当前状态：{str(self.is_processing)}")
                             self.capture_and_process(self.screen_width, self.screen_height)
                 except Exception as e:
-                    print(f"状态检查错误: {str(e)}")
+                    logging.error(f"状态检查错误: {str(e)}")
                 finally:
                     if self._running:
                         self.root.after(50, check_state)
@@ -944,7 +956,7 @@ class ScreenOCRTool:
             # 创建系统托盘
             from system_tray import SystemTray
             self.tray = SystemTray(self)
-            
+        
             # 在新线程中运行系统托盘
             tray_thread = threading.Thread(target=self.tray.run)
             tray_thread.daemon = True
@@ -971,21 +983,18 @@ class ScreenOCRTool:
                     self.root.update()
                     time.sleep(0.01)
                 except KeyboardInterrupt:
-                    print("\n接收到退出信号")
                     on_closing()
                     break
                 except Exception as e:
                     if str(e).startswith("invalid command name"):  # Tkinter窗口已关闭
                         break
-                    print(f"主循环错误: {str(e)}")
+                    logging.error(f"主循环错误: {str(e)}")
         
         except Exception as e:
-            print(f"运行错误: {str(e)}")
+            logging.error(f"运行错误: {str(e)}")
         finally:
             self._running = False
-            print("程序正在退出清理资源...")
             self.cleanup()
-            print("程序退出完成")
     
     def reload_config(self):
         """重新加载配置"""
@@ -996,30 +1005,23 @@ class ScreenOCRTool:
                 
                 # 更新触发延时
                 self.trigger_delay_ms = self.config.get('trigger_delay_ms', 300)
-                print(f"触发延迟已更新为: {self.trigger_delay_ms}ms")
                 
                 # 更新快捷键配置
                 self.hotkey = self.config.get('hotkey', 'alt')
-                print(f"快捷键已更新为: {self.hotkey}")
                 
                 # 如果OCR引擎为None或发生变化，进行初始化
                 new_engine = self.config.get('ocr_engine', self.DEFAULT_CONFIG["ocr_engine"])
                 if self._ocr_engine != new_engine:
-                    print(f"OCR引擎{'初始化' if old_engine is None else f'从 {old_engine} 切换'} 为 {new_engine}")
                     self._ocr_engine = new_engine
                     self.init_ocr_engine()
-                
-                print("配置已重新加载")
         except Exception as e:
-            print(f"重新加载配置失败: {str(e)}")
+            logging.error(f"重新加载配置失败: {str(e)}")
     
     def toggle_enabled(self):
         """切换服务状态"""
         self.enabled = not self.enabled
         if not self.enabled:
-            # 如果禁用服务，清理所有窗口
             self.cleanup_windows()
-        print(f"服务状态已切换为: {'启用' if self.enabled else '禁用'}")
     
     def cleanup(self):
         """清理所有资源"""

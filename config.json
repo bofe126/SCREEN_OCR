@@ -1,5 +1,5 @@
 {
-    "ocr_engine": "PaddleOCR",
+    "ocr_engine": "WeChatOCR",
     "trigger_delay_ms": 350,
     "hotkey": "ALT",
     "auto_copy": true,

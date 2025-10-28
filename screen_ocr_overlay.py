@@ -16,19 +16,26 @@ import numpy as np
 import queue
 import threading
 import sys
+from wechat_ocr_wrapper import get_wechat_ocr
 
 # 配置日志
-logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# 关闭第三方库的调试日志
+logging.getLogger('PIL').setLevel(logging.WARNING)
+logging.getLogger('urllib3').setLevel(logging.WARNING)
+logging.getLogger('paddleocr').setLevel(logging.WARNING)
 
 class ScreenOCRTool:
     # 默认配置常量
     DEFAULT_CONFIG = {
-        "ocr_engine": "PaddleOCR",
+        "ocr_engine": "WeChatOCR",
         "trigger_delay_ms": 300,
         "hotkey": "ALT",
         "auto_copy": True,
         "show_debug": False,
-        "debug_log": ""
+        "debug_log": "",
+        "image_preprocess": False  # 图像预处理（对比度增强+锐化）
     }
     
     def __init__(self):
@@ -95,10 +102,14 @@ class ScreenOCRTool:
         
         # 初始化OCR相关属性
         self._paddle_ocr = None
+        self._wechat_ocr = None
         self._ocr_engine: str = self.config.get("ocr_engine", self.DEFAULT_CONFIG["ocr_engine"])
         self.trigger_delay_ms: int = self.config.get("trigger_delay_ms", self.DEFAULT_CONFIG["trigger_delay_ms"])
         self.hotkey: str = self.config.get("hotkey", self.DEFAULT_CONFIG["hotkey"])
         self.pressed_keys: set = set()
+        
+        # 主动初始化 OCR 引擎
+        self.init_ocr_engine()
 
         # 定义虚拟键码映射
         self.key_mapping = {
@@ -153,21 +164,13 @@ class ScreenOCRTool:
         
     @property
     def paddle_ocr(self):
-        """延迟初始化PaddleOCR实例"""
-        if self._paddle_ocr is None and self._ocr_engine == "PaddleOCR":
-            import logging
-            logging.getLogger("ppocr").setLevel(logging.WARNING)  # 设置日志级别为WARNING
-            print("正在初始化PaddleOCR（轻量级移动端模型）...")
-            # 使用PP-OCRv4的轻量级移动端模型，速度更快
-            # 新版本PaddleOCR使用device参数控制CPU/GPU
-            self._paddle_ocr = PaddleOCR(
-                use_textline_orientation=True,  # 启用文本方向检测
-                lang="ch",  # 中文
-                ocr_version='PP-OCRv4',  # 使用v4版本（比v5服务器版本更快）
-                device='cpu'  # 使用CPU（桌面应用推荐）
-            )
-            print("PaddleOCR初始化完成")
+        """获取PaddleOCR实例（已在启动时初始化）"""
         return self._paddle_ocr
+
+    @property
+    def wechat_ocr(self):
+        """获取WeChatOCR实例（已在启动时初始化）"""
+        return self._wechat_ocr
 
     def validate_config(self, config: dict) -> bool:
         """验证配置值的合法性"""
@@ -178,7 +181,7 @@ class ScreenOCRTool:
             if not isinstance(config["hotkey"], str) or not config["hotkey"]:
                 print("错误：hotkey 必须是非空字符串")
                 return False
-            if config["ocr_engine"] not in ["PaddleOCR", "Tesseract"]:
+            if config["ocr_engine"] not in ["PaddleOCR", "Tesseract", "WeChatOCR"]:
                 print("错误：不支持的 OCR 引擎")
                 return False
             return True
@@ -190,14 +193,37 @@ class ScreenOCRTool:
         """初始化OCR引擎"""
         try:
             # 清理现有的OCR引擎
-            if hasattr(self, '_paddle_ocr'):
+            if hasattr(self, '_paddle_ocr') and self._paddle_ocr:
                 self._paddle_ocr = None
+            if hasattr(self, '_wechat_ocr') and self._wechat_ocr:
+                try:
+                    self._wechat_ocr.close()
+                except:
+                    pass
+                self._wechat_ocr = None
 
             # 根据配置初始化OCR引擎
             if self._ocr_engine == "PaddleOCR":
-                print("初始化PaddleOCR引擎...")
-                self._paddle_ocr = PaddleOCR(use_textline_orientation=True, lang="ch")
-            print(f"OCR引擎已设置为: {self._ocr_engine}")
+                print("正在初始化 PaddleOCR（轻量级移动端模型）...")
+                logging.getLogger("ppocr").setLevel(logging.WARNING)
+                self._paddle_ocr = PaddleOCR(
+                    use_textline_orientation=True,
+                    lang="ch",
+                    ocr_version='PP-OCRv4',
+                    device='cpu'
+                )
+                print("PaddleOCR 初始化完成")
+            elif self._ocr_engine == "WeChatOCR":
+                print("正在初始化 WeChatOCR...")
+                self._wechat_ocr = get_wechat_ocr()
+                if self._wechat_ocr and self._wechat_ocr.is_available():
+                    print("WeChatOCR 初始化完成")
+                else:
+                    logging.warning("WeChatOCR 不可用，请确保已安装微信客户端")
+            else:
+                print(f"使用 Tesseract OCR 引擎")
+            
+            print(f"OCR 引擎已设置为: {self._ocr_engine}")
         except Exception as e:
             print(f"初始化OCR引擎失败: {str(e)}")
 
@@ -374,6 +400,8 @@ class ScreenOCRTool:
         try:
             if self._ocr_engine == "PaddleOCR":
                 return self._get_text_positions_paddle(image)
+            elif self._ocr_engine == "WeChatOCR":
+                return self._get_text_positions_wechat(image)
             else:
                 return self._get_text_positions_tesseract(image)
         except Exception as e:
@@ -500,6 +528,23 @@ class ScreenOCRTool:
             
         except Exception as e:
             logging.error(f"Tesseract处理失败: {str(e)}")
+            return []
+
+    def _get_text_positions_wechat(self, image):
+        """使用WeChatOCR获取文字位置"""
+        try:
+            ocr = self.wechat_ocr
+            if ocr is None or not ocr.is_available():
+                logging.error("WeChatOCR 不可用")
+                return []
+            
+            # WeChatOCR 直接接受 PIL Image，可选预处理
+            preprocess = self.config.get("image_preprocess", False)
+            result = ocr.ocr_pil_image(image, preprocess=preprocess)
+            return result
+            
+        except Exception as e:
+            logging.error(f"WeChatOCR处理失败: {str(e)}")
             return []
 
     def should_add_space(self, prev_block, next_block, min_gap=10):

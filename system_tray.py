@@ -141,7 +141,7 @@ class ConfigDialog:
         self.callback = callback
         self.root = None
         self.default_config = {
-            "ocr_engine": "PaddleOCR",
+            "ocr_engine": "WeChatOCR",
             "trigger_delay_ms": 300,
             "hotkey": "alt",
             "auto_copy": True,
@@ -232,9 +232,7 @@ class ConfigDialog:
         
         self.engine_var = tk.StringVar(value=self.config.get("ocr_engine", self.default_config["ocr_engine"]))
         engine_combo = ttk.Combobox(main_frame, textvariable=self.engine_var, state="readonly", font=ModernTheme.NORMAL_FONT)
-        engine_combo['values'] = ("PaddleOCR", "Tesseract")
-        if self.engine_var.get() == "PaddleOCR":
-            engine_combo.set("PaddleOCR")
+        engine_combo['values'] = ("WeChatOCR", "PaddleOCR", "Tesseract")
         engine_combo.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
         current_row += 1
         
@@ -314,6 +312,14 @@ class ConfigDialog:
                                      variable=self.auto_copy_var,
                                      style="TCheckbutton")
         auto_copy_cb.grid(row=current_row, column=0, sticky="w", pady=(0, 8))
+        current_row += 1
+        
+        self.image_preprocess_var = tk.BooleanVar(value=self.config.get("image_preprocess", self.default_config.get("image_preprocess", False)))
+        preprocess_cb = ttk.Checkbutton(main_frame, 
+                                     text="图像预处理 (增强对比度+锐化，适合模糊/低对比度文字)", 
+                                     variable=self.image_preprocess_var,
+                                     style="TCheckbutton")
+        preprocess_cb.grid(row=current_row, column=0, sticky="w", pady=(0, 8))
         current_row += 1
         
         self.show_debug_var = tk.BooleanVar(value=self.config.get("show_debug", self.default_config["show_debug"]))
@@ -463,6 +469,7 @@ class ConfigDialog:
             "trigger_delay_ms": self.delay_var.get(),
             "hotkey": self.hotkey_var.get(),
             "auto_copy": self.auto_copy_var.get(),
+            "image_preprocess": self.image_preprocess_var.get(),
             "show_debug": self.show_debug_var.get(),
             "debug_log": self.debug_text.get('1.0', 'end-1c') if self.show_debug_var.get() else ""
         })
@@ -748,7 +755,7 @@ class SystemTray:
     def get_default_config(self):
         """获取默认配置"""
         return {
-            "ocr_engine": "PaddleOCR",
+            "ocr_engine": "WeChatOCR",
             "trigger_delay_ms": 300,
             "hotkey": "alt",
             "auto_copy": True,

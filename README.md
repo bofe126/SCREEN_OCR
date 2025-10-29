@@ -32,24 +32,68 @@
 2. 拖动选择文本 / Drag to select text
 3. 自动复制到剪贴板 / Auto-copy to clipboard
 
+## 快速开始 / Quick Start
+
+### 安装 / Installation
+
+```bash
+# 1. 安装核心依赖
+pip install -r requirements.txt
+
+# 2. 下载 WeChatOCR 引擎（推荐）
+# 从 https://github.com/swigger/wechat-ocr 下载 wcocr.pyd
+# 放在项目根目录
+
+# 3. 运行程序
+python screen_ocr_overlay.py
+```
+
+### 打包成 exe / Build exe
+
+```bash
+# 方法1：一键打包（推荐）
+build.bat
+
+# 方法2：使用 Python 脚本
+python build_exe.py
+
+# 方法3：简易打包
+build_simple.bat
+```
+
+**详细说明:** 查看 [BUILD.md](BUILD.md)
+
+### 可选 OCR 引擎 / Optional OCR Engines
+
+```bash
+# 安装 PaddleOCR（离线、高准确度）
+pip install paddlepaddle paddleocr numpy
+```
+
+**详细说明:** 查看 [INSTALL_OCR_ENGINES.md](INSTALL_OCR_ENGINES.md)
+
 ## 技术特点 / Technical Features
 
 ### OCR引擎 / OCR Engines
-- 主要引擎：PaddleOCR（支持中文）/ Primary: PaddleOCR (Chinese support)
-- 备选引擎：Tesseract / Secondary: Tesseract
+- 默认引擎：WeChatOCR（快速、准确）/ Default: WeChatOCR (fast, accurate)
+- 可选引擎：PaddleOCR / Optional: PaddleOCR
 
 ### 依赖项 / Dependencies
-- Python 3.6+
-- tkinter
-- win32api/win32gui
-- pytesseract
-- PaddleOCR
-- PIL (Pillow)
-- BeautifulSoup
+
+**核心依赖（必需）/ Core Dependencies (Required):**
+- Python 3.8+
+- pywin32 (Windows API)
+- Pillow (图像处理 / Image processing)
+- pystray (系统托盘 / System tray)
+- tkinter (标准库 / Standard library)
+
+**OCR 引擎（选装）/ OCR Engines (Optional):**
+- wcocr.pyd - WeChatOCR 引擎（推荐 / Recommended）
+- paddlepaddle + paddleocr - PaddleOCR（离线 / Offline）
 
 ### 系统要求 / System Requirements
 - 操作系统：Windows 10/11 / OS: Windows 10/11
-- 需要安装Tesseract OCR / Requires Tesseract OCR installation
+- 微信客户端（使用 WeChatOCR 时）/ WeChat client (for WeChatOCR)
 
 ## 性能优化 / Performance Optimization
 - 最小化CPU使用 / Minimal CPU usage

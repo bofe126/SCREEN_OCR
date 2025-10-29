@@ -120,8 +120,8 @@ class WeChatOCRWrapper:
                         if ocr_exe.exists():
                             return str(ocr_exe)
                 
-        except Exception as e:
-            logging.debug(f"从注册表查找失败: {str(e)}")
+        except:
+            pass
         
         return None
     
@@ -155,14 +155,14 @@ class WeChatOCRWrapper:
                             logging.info(f"找到微信 4.0 运行时目录: {version_dir}")
                             return str(version_dir)
                 # 微信 4.0 必须找到 Weixin\版本号 目录，否则继续往下找
-                logging.debug(f"微信 4.0 未在注册表路径同级找到 Weixin 目录")
+                pass
             else:
                 # 不是微信 4.0，返回注册表路径
                 if install_path.exists():
                     return str(install_path)
                 
-        except Exception as e:
-            logging.debug(f"从注册表查找微信目录失败: {str(e)}")
+        except:
+            pass
         
         # 方法2: 在常见安装位置查找
         # 获取所有可能的驱动器
@@ -377,7 +377,6 @@ class WeChatOCRWrapper:
                             })
                     else:
                         skipped_count += 1
-                        logging.debug(f"跳过无效项: text='{text}', x={x}, y={y}, width={width}, height={height}")
                     
                 except Exception as e:
                     logging.warning(f"解析 OCR 结果项失败: {str(e)}")

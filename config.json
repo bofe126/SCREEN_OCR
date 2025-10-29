@@ -4,5 +4,6 @@
     "hotkey": "ALT",
     "auto_copy": true,
     "show_debug": false,
-    "debug_log": ""
+    "debug_log": "",
+    "image_preprocess": false
 }

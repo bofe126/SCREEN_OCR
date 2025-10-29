@@ -4,19 +4,19 @@ import win32con
 import win32ui
 import ctypes
 from ctypes import wintypes
-import pytesseract
 from PIL import Image, ImageTk, ImageDraw
 import tkinter as tk
 import logging
 import traceback
-from bs4 import BeautifulSoup
 import time
-from paddleocr import PaddleOCR
-import numpy as np
 import queue
 import threading
 import sys
 from wechat_ocr_wrapper import get_wechat_ocr
+
+# 可选的 OCR 引擎依赖（动态导入）
+# PaddleOCR - 在 _get_text_positions_paddle 中导入
+# numpy - 在 _get_text_positions_paddle 中导入
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -42,15 +42,12 @@ class ScreenOCRTool:
         print("初始化程序...")
         # 设置高DPI支持
         try:
-            ctypes.windll.shcore.SetProcessDpiAwareness(2)  # PROCESS_PER_MONITOR_DPI_AWARE
+            ctypes.windll.shcore.SetProcessDpiAwareness(2)
         except:
             try:
-                ctypes.windll.shcore.SetProcessDpiAwareness(1)  # PROCESS_SYSTEM_DPI_AWARE
+                ctypes.windll.user32.SetProcessDPIAware()
             except:
-                try:
-                    ctypes.windll.user32.SetProcessDPIAware()  # 旧版API
-                except:
-                    pass
+                pass
         
         # 添加配置队列和状态标志
         self.config_queue: queue.Queue = queue.Queue()
@@ -84,9 +81,6 @@ class ScreenOCRTool:
         print("开始设置键盘钩子...")
         self.setup_keyboard_hook()
         print("键盘钩子设置完成")
-        
-        # 设置 Tesseract 路径
-        pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
         
         # 添加选择模式配置
         self.selection_mode: str = 'text'  # 'text' 或 'region'
@@ -181,7 +175,7 @@ class ScreenOCRTool:
             if not isinstance(config["hotkey"], str) or not config["hotkey"]:
                 print("错误：hotkey 必须是非空字符串")
                 return False
-            if config["ocr_engine"] not in ["PaddleOCR", "Tesseract", "WeChatOCR"]:
+            if config["ocr_engine"] not in ["PaddleOCR", "WeChatOCR"]:
                 print("错误：不支持的 OCR 引擎")
                 return False
             return True
@@ -205,14 +199,20 @@ class ScreenOCRTool:
             # 根据配置初始化OCR引擎
             if self._ocr_engine == "PaddleOCR":
                 print("正在初始化 PaddleOCR（轻量级移动端模型）...")
-                logging.getLogger("ppocr").setLevel(logging.WARNING)
-                self._paddle_ocr = PaddleOCR(
-                    use_textline_orientation=True,
-                    lang="ch",
-                    ocr_version='PP-OCRv4',
-                    device='cpu'
-                )
-                print("PaddleOCR 初始化完成")
+                try:
+                    from paddleocr import PaddleOCR
+                    logging.getLogger("ppocr").setLevel(logging.WARNING)
+                    self._paddle_ocr = PaddleOCR(
+                        use_textline_orientation=True,
+                        lang="ch",
+                        ocr_version='PP-OCRv4',
+                        device='cpu'
+                    )
+                    print("PaddleOCR 初始化完成")
+                except ImportError as e:
+                    logging.error(f"PaddleOCR 未安装: {e}")
+                    logging.error("请安装: pip install paddlepaddle paddleocr")
+                    self._paddle_ocr = None
             elif self._ocr_engine == "WeChatOCR":
                 print("正在初始化 WeChatOCR...")
                 self._wechat_ocr = get_wechat_ocr()
@@ -220,8 +220,6 @@ class ScreenOCRTool:
                     print("WeChatOCR 初始化完成")
                 else:
                     logging.warning("WeChatOCR 不可用，请确保已安装微信客户端")
-            else:
-                print(f"使用 Tesseract OCR 引擎")
             
             print(f"OCR 引擎已设置为: {self._ocr_engine}")
         except Exception as e:
@@ -403,7 +401,8 @@ class ScreenOCRTool:
             elif self._ocr_engine == "WeChatOCR":
                 return self._get_text_positions_wechat(image)
             else:
-                return self._get_text_positions_tesseract(image)
+                logging.error(f"不支持的 OCR 引擎: {self._ocr_engine}")
+                return []
         except Exception as e:
             logging.error(f"OCR处理失败: {str(e)}")
             return []
@@ -411,6 +410,14 @@ class ScreenOCRTool:
     def _get_text_positions_paddle(self, image):
         """使用PaddleOCR获取文字位置"""
         try:
+            # 动态导入 PaddleOCR 依赖
+            try:
+                import numpy as np
+            except ImportError as e:
+                logging.error(f"PaddleOCR 依赖未安装: {e}")
+                logging.error("请安装: pip install numpy paddlepaddle paddleocr")
+                return []
+            
             # 转换图像为numpy数组
             if isinstance(image, Image.Image):
                 image = np.array(image)
@@ -487,47 +494,6 @@ class ScreenOCRTool:
             
         except Exception as e:
             logging.error(f"PaddleOCR处理失败: {str(e)}")
-            return []
-
-    def _get_text_positions_tesseract(self, image):
-        """使用Tesseract获取文字位置（原有的实现）"""
-        try:
-            hocr_data = pytesseract.image_to_pdf_or_hocr(
-                image,
-                extension='hocr',
-                lang='chi_sim+eng',
-                config='--psm 3'
-            ).decode('utf-8')
-            
-            soup = BeautifulSoup(hocr_data, 'html.parser')
-            result = []
-            
-            for word in soup.find_all(class_='ocrx_word'):
-                if word.get('title'):
-                    coords = word['title'].split(';')[0]
-                    bbox = coords.split('bbox ')[1].split()
-                    x1, y1, x2, y2 = map(int, bbox)
-                    text = word.get_text()
-                    
-                    # 计算每个字符的宽度
-                    if len(text) > 0:
-                        char_width = (x2 - x1) / len(text)
-                        
-                        # 为每个字符创建单独的文本块
-                        for i, char in enumerate(text):
-                            char_x = x1 + i * char_width
-                            result.append({
-                                'text': char,
-                                'x': int(char_x),
-                                'y': int(y1),
-                                'width': int(char_width),
-                                'height': int(y2 - y1)
-                            })
-            
-            return result
-            
-        except Exception as e:
-            logging.error(f"Tesseract处理失败: {str(e)}")
             return []
 
     def _get_text_positions_wechat(self, image):

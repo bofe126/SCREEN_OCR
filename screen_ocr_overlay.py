@@ -718,26 +718,22 @@ class ScreenOCRTool:
             
             # 显示截图作为背景
             if self.current_screenshot:
-                photo = ImageTk.PhotoImage(self.current_screenshot)
-                canvas.photo = photo
-                canvas.create_image(0, 0, image=photo, anchor='nw')
-                
-                # 如果是等待状态，显示提示文本
+                # 创建带遮罩的图像
                 if not text_blocks:
+                    # 等待状态：黑色半透明遮罩
+                    masked_img = self.current_screenshot.copy()
+                    # 创建黑色半透明遮罩层
+                    overlay = Image.new('RGBA', masked_img.size, (0, 0, 0, 180))  # 黑色，透明度180/255
+                    masked_img = masked_img.convert('RGBA')
+                    masked_img = Image.alpha_composite(masked_img, overlay)
+                    
+                    photo = ImageTk.PhotoImage(masked_img)
+                    canvas.photo = photo
+                    canvas.create_image(0, 0, image=photo, anchor='nw')
+                    
                     # 计算屏幕中心位置
                     center_x = screen_width / 2
                     center_y = screen_height / 2
-                    
-                    # 创建半透明背景
-                    bg_height = 40
-                    bg_y1 = center_y - bg_height/2
-                    bg_y2 = center_y + bg_height/2
-                    canvas.create_rectangle(
-                        0, bg_y1, screen_width, bg_y2,
-                        fill='black',
-                        stipple='gray50',  # 创建半透明效果
-                        tags='waiting_bg'
-                    )
                     
                     # 显示等待文本
                     canvas.create_text(
@@ -747,6 +743,17 @@ class ScreenOCRTool:
                         fill='white',
                         tags='waiting_text'
                     )
+                else:
+                    # 识别完成状态：浅色半透明遮罩
+                    masked_img = self.current_screenshot.copy()
+                    # 创建白色半透明遮罩层，透明度更低
+                    overlay = Image.new('RGBA', masked_img.size, (255, 255, 255, 100))  # 白色，透明度100/255
+                    masked_img = masked_img.convert('RGBA')
+                    masked_img = Image.alpha_composite(masked_img, overlay)
+                    
+                    photo = ImageTk.PhotoImage(masked_img)
+                    canvas.photo = photo
+                    canvas.create_image(0, 0, image=photo, anchor='nw')
             
             # 显示窗口
             self.overlay_window.deiconify()

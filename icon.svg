@@ -1,8 +1,48 @@
 <?xml version="1.0" encoding="UTF-8" standalone="no"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
-  <rect width="256" height="256" fill="none"/>
-  <rect x="32" y="48" width="192" height="160" rx="16" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>
-  <line x1="32" y1="88" x2="224" y2="88" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>
-  <line x1="32" y1="168" x2="224" y2="168" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>
-  <line x1="88" y1="128" x2="168" y2="128" fill="none" stroke="#000000" stroke-linecap="round" stroke-linejoin="round" stroke-width="16"/>
+  <defs>
+    <!-- 背景渐变 - 更鲜艳的蓝色 -->
+    <linearGradient id="bgGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1D4ED8;stop-opacity:1" />
+    </linearGradient>
+    
+    <!-- 扫描线渐变 -->
+    <linearGradient id="scanGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#22D3EE;stop-opacity:0" />
+      <stop offset="50%" style="stop-color:#22D3EE;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#22D3EE;stop-opacity:0" />
+    </linearGradient>
+  </defs>
+  
+  <!-- 圆角矩形背景 -->
+  <rect x="0" y="0" width="256" height="256" rx="56" fill="url(#bgGradient)"/>
+  
+  <!-- 白色大字母 "A" - 使用路径绘制，包含镂空 -->
+  <path d="M 128 60 L 185 190 L 160 190 L 150 165 L 106 165 L 96 190 L 71 190 Z M 118 145 L 138 145 L 128 115 Z" 
+        fill="white" 
+        fill-rule="evenodd"/>
+  
+  <!-- 扫描框 - 四个角，更粗更亮 -->
+  <g stroke="#22D3EE" stroke-width="12" fill="none" stroke-linecap="round">
+    <!-- 左上 -->
+    <path d="M 35 85 L 35 35 L 85 35" />
+    <!-- 右上 -->
+    <path d="M 171 35 L 221 35 L 221 85" />
+    <!-- 左下 -->
+    <path d="M 35 171 L 35 221 L 85 221" />
+    <!-- 右下 -->
+    <path d="M 221 171 L 221 221 L 171 221" />
+  </g>
+  
+  <!-- 扫描线效果 - 更亮的青色 -->
+  <rect x="35" y="100" width="186" height="8" rx="4" fill="url(#scanGradient)" opacity="0.9">
+    <animate attributeName="y" values="35;213;35" dur="2.5s" repeatCount="indefinite"/>
+  </rect>
+  
+  <!-- 小的文字行点缀（底部） -->
+  <g fill="white" opacity="0.7">
+    <rect x="75" y="200" width="45" height="5" rx="2.5"/>
+    <rect x="128" y="200" width="53" height="5" rx="2.5"/>
+  </g>
 </svg>

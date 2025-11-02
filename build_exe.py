@@ -19,9 +19,47 @@ def clean_build():
     if os.path.exists(spec_file):
         os.remove(spec_file)
 
+def convert_svg_to_ico():
+    """将 SVG 转换为 ICO 格式"""
+    print("转换图标格式...")
+    try:
+        from PIL import Image
+        from cairosvg import svg2png
+        from io import BytesIO
+        
+        # 读取 SVG
+        with open('icon.svg', 'rb') as f:
+            svg_data = f.read()
+        
+        # 转换为多个尺寸的 ICO
+        sizes = [16, 32, 48, 64, 128, 256]
+        images = []
+        
+        for size in sizes:
+            png_data = svg2png(bytestring=svg_data, output_width=size, output_height=size)
+            img = Image.open(BytesIO(png_data))
+            images.append(img)
+        
+        # 保存为 ICO
+        images[0].save('icon.ico', format='ICO', sizes=[(s, s) for s in sizes], append_images=images[1:])
+        print("✅ 图标转换完成: icon.ico")
+        return True
+    except Exception as e:
+        print(f"⚠️ 图标转换失败: {e}")
+        print("   将使用默认图标")
+        return False
+
 def build_exe():
     """构建 exe"""
     print("开始构建 ScreenOCR.exe...")
+    
+    # 检查或生成图标
+    if not os.path.exists('icon.ico'):
+        print("icon.ico 不存在，尝试从 SVG 生成...")
+        has_icon = convert_svg_to_ico()
+    else:
+        print(f"✓ 找到图标文件: icon.ico")
+        has_icon = True
     
     # PyInstaller 命令（使用 python -m 方式调用）
     cmd = [
@@ -32,6 +70,10 @@ def build_exe():
         '--windowed',  # 不显示控制台窗口
         '--onefile',   # 打包成单个 exe
         '--clean',
+        '--noconfirm',  # 不询问，直接覆盖
+        
+        # 设置图标
+        f'--icon={os.path.abspath("icon.ico")}' if has_icon else '',
         
         # 添加数据文件
         '--add-data=icon.svg;.',

@@ -775,6 +775,7 @@ class SystemTray:
             )
             
             # 运行系统托盘
+            # pystray 会自动处理菜单位置，但在 Windows 上需要确保正确初始化
             self.icon.run()
         except Exception as e:
             print(f"系统托盘运行错误: {e}")

@@ -42,23 +42,46 @@ def convert_svg_to_ico():
         
         # 保存为 ICO
         images[0].save('icon.ico', format='ICO', sizes=[(s, s) for s in sizes], append_images=images[1:])
-        print("✅ 图标转换完成: icon.ico")
+        print("[OK] 图标转换完成: icon.ico")
         return True
     except Exception as e:
-        print(f"⚠️ 图标转换失败: {e}")
+        print(f"[WARN] 图标转换失败: {e}")
         print("   将使用默认图标")
+        return False
+
+def fix_pystray():
+    """修复 pystray 库的菜单位置 bug"""
+    print("检查 pystray 库...")
+    
+    # 运行修复脚本
+    if os.path.exists('fix_pystray_before_build.py'):
+        result = subprocess.run([sys.executable, 'fix_pystray_before_build.py'], 
+                              capture_output=True, text=True)
+        if result.returncode == 0:
+            print("[OK] pystray 库检查完成")
+            return True
+        else:
+            print("[WARN] pystray 修复脚本执行异常")
+            print(result.stdout)
+            return False
+    else:
+        print("[WARN] 未找到 pystray 修复脚本")
         return False
 
 def build_exe():
     """构建 exe"""
     print("开始构建 ScreenOCR.exe...")
     
+    # 修复 pystray 库
+    fix_pystray()
+    print()
+    
     # 检查或生成图标
     if not os.path.exists('icon.ico'):
         print("icon.ico 不存在，尝试从 SVG 生成...")
         has_icon = convert_svg_to_ico()
     else:
-        print(f"✓ 找到图标文件: icon.ico")
+        print(f"[OK] 找到图标文件: icon.ico")
         has_icon = True
     
     # PyInstaller 命令（使用 python -m 方式调用）
@@ -104,23 +127,23 @@ def build_exe():
     result = subprocess.run(cmd, capture_output=False)
     
     if result.returncode == 0:
-        print("\n✅ 构建成功！")
-        print(f"📦 程序位置: {os.path.abspath('dist/ScreenOCR.exe')}")
+        print("\n[OK] 构建成功！")
+        print(f"[INFO] 程序位置: {os.path.abspath('dist/ScreenOCR.exe')}")
         
         # 复制必要的文件到 dist
         if os.path.exists('wcocr.pyd'):
             shutil.copy('wcocr.pyd', 'dist/')
-            print("✅ 已复制 wcocr.pyd 到 dist/")
+            print("[OK] 已复制 wcocr.pyd 到 dist/")
         
         if os.path.exists('config.json'):
             shutil.copy('config.json', 'dist/')
-            print("✅ 已复制 config.json 到 dist/")
+            print("[OK] 已复制 config.json 到 dist/")
         
-        print("\n📝 运行程序:")
+        print("\n[INFO] 运行程序:")
         print("   cd dist")
         print("   ScreenOCR.exe")
     else:
-        print("\n❌ 构建失败！")
+        print("\n[FAIL] 构建失败！")
         sys.exit(1)
 
 if __name__ == '__main__':
@@ -132,22 +155,22 @@ if __name__ == '__main__':
     # 检查 PyInstaller
     try:
         import PyInstaller
-        print(f"✅ PyInstaller {PyInstaller.__version__}")
+        print(f"[OK] PyInstaller {PyInstaller.__version__}")
     except ImportError:
-        print("❌ 未安装 PyInstaller")
+        print("[FAIL] 未安装 PyInstaller")
         print()
         print("正在尝试安装 PyInstaller...")
         try:
             subprocess.run([sys.executable, '-m', 'pip', 'install', 'pyinstaller'], check=True)
-            print("✅ PyInstaller 安装成功")
+            print("[OK] PyInstaller 安装成功")
             import PyInstaller
         except Exception as e:
-            print(f"❌ 安装失败: {e}")
+            print(f"[FAIL] 安装失败: {e}")
             print()
             print("请手动运行: pip install pyinstaller")
             sys.exit(1)
     
-    print(f"✅ Python {sys.version.split()[0]}")
+    print(f"[OK] Python {sys.version.split()[0]}")
     print()
     
     # 清理旧文件

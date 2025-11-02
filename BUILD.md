@@ -67,20 +67,49 @@ dist/
 
 ## 注意事项
 
-### 1. wcocr.pyd
+### 1. pystray 库的已知 bug
+
+**重要：** 项目包含自动修复脚本来解决 pystray 库的菜单位置 bug。
+
+**问题说明：**
+- pystray 库在 Windows 上存在一个 bug，导致系统托盘右键菜单位置不正确
+- Bug 原因：库源代码中将菜单标志位写在了注释里（`| win32.TPM_BOTTOMALIGN` 在 `#` 后面）
+- 影响：菜单会显示在鼠标右下角，而不是正确的右上角
+
+**自动修复：**
+- 打包脚本会在打包前自动运行 `fix_pystray_before_build.py`
+- 该脚本会自动修复本地安装的 pystray 库
+- 无需手动操作，打包即可自动修复
+
+**手动修复（可选）：**
+```bash
+# 如果自动修复失败，可以手动运行
+python fix_pystray_before_build.py
+```
+
+**技术细节：**
+```python
+# Bug 代码（位于 pystray/_win32.py 第217行）：
+win32.TPM_LEFTALIGN  # ... | win32.TPM_BOTTOMALIGN  # ...
+
+# 修复后：
+win32.TPM_LEFTALIGN | win32.TPM_BOTTOMALIGN
+```
+
+### 2. wcocr.pyd
 
 打包脚本会自动将 `wcocr.pyd` 复制到 `dist/` 目录。如果没有这个文件：
 - 从 [swigger/wechat-ocr](https://github.com/swigger/wechat-ocr) 下载
 - 放在项目根目录或 `dist/` 目录
 
-### 2. 首次运行
+### 3. 首次运行
 
 首次运行 exe 时：
 - 会自动创建 `config.json`
 - 需要安装微信客户端（用于 WeChatOCR）
 - 程序会自动查找微信路径
 
-### 3. 体积优化
+### 4. 体积优化
 
 单文件 exe 体积约 **20-30MB**（已排除 PaddleOCR/Tesseract）
 
@@ -88,7 +117,7 @@ dist/
 - 使用 `--onedir` 替代 `--onefile`（生成目录，体积更小但文件多）
 - 使用 UPX 压缩（`--upx-dir=/path/to/upx`）
 
-### 4. 依赖说明
+### 5. 依赖说明
 
 **包含的依赖：**
 - ✅ pywin32（Windows API）

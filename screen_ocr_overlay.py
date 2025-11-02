@@ -101,9 +101,16 @@ class ScreenOCRTool:
         self.trigger_delay_ms: int = self.config.get("trigger_delay_ms", self.DEFAULT_CONFIG["trigger_delay_ms"])
         self.hotkey: str = self.config.get("hotkey", self.DEFAULT_CONFIG["hotkey"])
         self.pressed_keys: set = set()
+        self._ocr_initialized: bool = False  # OCR 初始化标志
         
-        # 主动初始化 OCR 引擎
-        self.init_ocr_engine()
+        # 延迟初始化 OCR 引擎 - 在后台线程中初始化
+        import threading
+        def init_ocr_background():
+            self.init_ocr_engine()
+            self._ocr_initialized = True
+        
+        ocr_thread = threading.Thread(target=init_ocr_background, daemon=True)
+        ocr_thread.start()
 
         # 定义虚拟键码映射
         self.key_mapping = {
@@ -865,6 +872,11 @@ class ScreenOCRTool:
     def capture_and_process(self, width, height):
         """捕获并处理屏幕"""
         if self.is_processing:
+            return
+        
+        # 如果 OCR 还未初始化完成，等待初始化
+        if not self._ocr_initialized:
+            print("OCR 引擎初始化中，请稍候...")
             return
         
         try:

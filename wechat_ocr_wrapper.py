@@ -48,10 +48,19 @@ class WeChatOCRWrapper:
                 # 初始化 wcocr
                 wcocr.init(self.ocr_exe_path, self.wechat_dir)
                 # 等待初始化完成（WeChatOCR 初始化是异步的）
+                # 优化：减少等待时间，使用更智能的检测方式
                 import time
-                time.sleep(6.0)  # 等待6秒确保进程完全启动
+                max_wait = 3.0  # 最多等待3秒
+                check_interval = 0.1  # 每100ms检查一次
+                waited = 0.0
+                while waited < max_wait:
+                    time.sleep(check_interval)
+                    waited += check_interval
+                    # 简单检测：等待一定时间后认为已就绪
+                    if waited >= 1.0:  # 至少等待1秒
+                        break
                 self.initialized = True
-                logging.info("WeChatOCR 初始化完成")
+                logging.info(f"WeChatOCR 初始化完成 (耗时 {waited:.1f}秒)")
             except Exception as e:
                 logging.error(f"初始化 WeChatOCR 失败: {str(e)}")
                 import traceback

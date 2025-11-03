@@ -66,9 +66,22 @@ def fix_pystray_menu():
     fixed = False
     
     for i, line in enumerate(lines):
-        # 查找包含 TrackPopupMenuEx 后面的标志位行
-        if 'TPM_LEFTALIGN' in line and '#' in line and '| win32.TPM_BOTTOMALIGN' in line:
-            print(f"  第{i+1}行: 发现 bug")
+        # 情况1：TPM_RIGHTALIGN（当前常见 bug）
+        if 'TPM_RIGHTALIGN' in line and 'TPM_BOTTOMALIGN' in line:
+            print(f"  第{i+1}行: 发现 bug (TPM_RIGHTALIGN)")
+            print(f"    原始: {line.strip()}")
+            
+            # 修复：将 TPM_RIGHTALIGN 改为 TPM_LEFTALIGN
+            new_line = line.replace('TPM_RIGHTALIGN', 'TPM_LEFTALIGN')
+            lines[i] = new_line
+            
+            print(f"    修复: {new_line.strip()}")
+            fixed = True
+            break
+        
+        # 情况2：TPM_LEFTALIGN 在注释中（旧版本 bug）
+        if 'TPM_LEFTALIGN' in line and '#' in line and 'TPM_BOTTOMALIGN' in line:
+            print(f"  第{i+1}行: 发现 bug (注释中的代码)")
             print(f"    原始: {line.strip()}")
             
             # 提取缩进

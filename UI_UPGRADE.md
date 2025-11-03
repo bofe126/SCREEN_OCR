@@ -112,6 +112,31 @@ CustomTkinter 会被 PyInstaller 自动检测和打包。
 
 无。所有功能正常工作。
 
+## 交互改进
+
+### 托盘图标左键点击 ✨
+- ✅ **新增**：左键点击托盘图标直接打开设置界面
+- ✅ 右键仍然显示完整菜单
+- ✅ 更符合用户习惯，提升使用体验
+
+**代码改动：**
+```python
+# system_tray.py
+# 添加 on_activate 参数
+self.icon = pystray.Icon(
+    "screen_ocr",
+    self.create_icon(),
+    "Screen OCR",
+    self.create_menu(),
+    on_activate=self.on_left_click  # 左键点击响应
+)
+
+# 新增左键点击处理方法
+def on_left_click(self, icon, item=None):
+    """处理托盘图标左键点击事件"""
+    self.show_config(icon, item)
+```
+
 ## 未来改进
 
 可选的进一步升级（未包含在本次升级中）：

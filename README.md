@@ -31,6 +31,8 @@
 1. 按住Alt键0.3秒触发 / Hold Alt for 0.3s to trigger
 2. 拖动选择文本 / Drag to select text
 3. 自动复制到剪贴板 / Auto-copy to clipboard
+4. 左键点击托盘图标打开设置 / Left-click tray icon to open settings
+5. 右键托盘图标显示完整菜单 / Right-click tray icon for full menu
 
 ## 快速开始 / Quick Start
 

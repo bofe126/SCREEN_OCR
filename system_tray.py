@@ -672,10 +672,15 @@ class SystemTray:
             # 将任务添加到OCR实例的配置队列
             self.ocr.config_queue.put(toggle)
     
+    def on_left_click(self, icon):
+        """处理托盘图标左键点击事件"""
+        # 左键点击时打开设置窗口
+        self.show_config(icon, None)
+    
     def create_menu(self):
         """创建系统托盘菜单"""
         return pystray.Menu(
-            pystray.MenuItem("设置", self.show_config),
+            pystray.MenuItem("设置", self.show_config, default=True),  # 设为默认项，双击时触发
             pystray.MenuItem("启动服务", self.toggle_service, checked=lambda item: self.ocr and self.ocr.enabled),
             pystray.MenuItem("帮助", self.show_help),
             pystray.MenuItem("退出", self.quit)
@@ -759,15 +764,17 @@ class SystemTray:
         """运行系统托盘程序"""
         try:
             # 创建系统托盘图标
+            # on_activate: 单击托盘图标时触发（打开设置）
+            # menu: 右键菜单
             self.icon = pystray.Icon(
                 "screen_ocr",
                 self.create_icon(),
                 "Screen OCR",
-                self.create_menu()
+                menu=self.create_menu(),
+                on_activate=self.on_left_click  # 左键单击打开设置
             )
             
             # 运行系统托盘
-            # pystray 会自动处理菜单位置，但在 Windows 上需要确保正确初始化
             self.icon.run()
         except Exception as e:
             print(f"系统托盘运行错误: {e}")

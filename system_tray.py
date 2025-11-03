@@ -2,6 +2,7 @@ import os
 import json
 import tkinter as tk
 from tkinter import ttk, scrolledtext
+import customtkinter as ctk
 import pystray
 from PIL import Image, ImageDraw, ImageFont, ImageTk
 import ctypes
@@ -11,6 +12,10 @@ import threading
 import win32api
 from cairosvg import svg2png
 from io import BytesIO
+
+# 设置 CustomTkinter 外观模式和主题
+ctk.set_appearance_mode("dark")  # 暗色模式（支持 "light", "dark", "system"）
+ctk.set_default_color_theme("blue")  # 蓝色主题（支持 "blue", "green", "dark-blue"）
 
 class HighDPIApp:
     """高DPI支持"""
@@ -153,7 +158,7 @@ class ConfigDialog:
             # 设置高DPI支持
             HighDPIApp.set_dpi_awareness()
             
-            self.root = tk.Toplevel()
+            self.root = ctk.CTkToplevel()
             self.root.title("Screen OCR 设置")
             
             # 获取DPI缩放比例
@@ -211,8 +216,8 @@ class ConfigDialog:
     
     def setup_ui(self):
         # 主容器
-        main_frame = ttk.Frame(self.root, padding="30 25 30 25")
-        main_frame.grid(row=0, column=0, sticky="nsew")
+        main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
+        main_frame.grid(row=0, column=0, sticky="nsew", padx=30, pady=25)
         
         # 配置网格权重
         self.root.columnconfigure(0, weight=1)
@@ -220,144 +225,133 @@ class ConfigDialog:
         main_frame.columnconfigure(0, weight=1)
         
         # 标题
-        title_label = ttk.Label(main_frame, text="Screen OCR 设置", style="Title.TLabel")
+        title_label = ctk.CTkLabel(main_frame, text="Screen OCR 设置", 
+                                   font=("Segoe UI", 20, "bold"),
+                                   text_color="#1f538d")
         title_label.grid(row=0, column=0, sticky="w", pady=(0, 25))
         
         current_row = 1
         
         # OCR引擎选择
-        engine_label = ttk.Label(main_frame, text="OCR引擎", font=ModernTheme.BOLD_FONT)
+        engine_label = ctk.CTkLabel(main_frame, text="OCR引擎", 
+                                     font=("Segoe UI", 14, "bold"))
         engine_label.grid(row=current_row, column=0, sticky="w", pady=(0, 5))
         current_row += 1
         
         self.engine_var = tk.StringVar(value=self.config.get("ocr_engine", self.default_config["ocr_engine"]))
-        engine_combo = ttk.Combobox(main_frame, textvariable=self.engine_var, state="readonly", font=ModernTheme.NORMAL_FONT)
-        engine_combo['values'] = ("WeChatOCR", "PaddleOCR")
+        engine_combo = ctk.CTkOptionMenu(main_frame, variable=self.engine_var,
+                                          values=["WeChatOCR", "PaddleOCR"],
+                                          command=lambda x: self.update_config())
         engine_combo.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
         current_row += 1
         
         # 触发延时设置
-        delay_label = ttk.Label(main_frame, text="触发延时 (ms)", font=ModernTheme.BOLD_FONT)
+        delay_label = ctk.CTkLabel(main_frame, text="触发延时 (ms)", 
+                                    font=("Segoe UI", 14, "bold"))
         delay_label.grid(row=current_row, column=0, sticky="w", pady=(0, 5))
         current_row += 1
         
         # 创建延时设置的容器框架
-        delay_frame = ttk.Frame(main_frame)
+        delay_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         delay_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
         delay_frame.columnconfigure(0, weight=1)  # 让滑块占据主要空间
         
         # 创建滑块
         self.delay_var = tk.IntVar(value=self.config.get("trigger_delay_ms", self.default_config["trigger_delay_ms"]))
-        delay_scale = ttk.Scale(
+        delay_scale = ctk.CTkSlider(
             delay_frame,
             from_=0,
             to=1000,
-            orient="horizontal",
             variable=self.delay_var,
             command=self.on_scale_change
         )
-        # 添加鼠标点击事件处理
-        delay_scale.bind('<Button-1>', self.on_scale_click)
         delay_scale.grid(row=0, column=0, sticky="ew", padx=(0, 10))
         
         # 创建数值显示框
-        self.delay_display = ttk.Label(
+        self.delay_display = ctk.CTkLabel(
             delay_frame,
             text=f"{self.delay_var.get()} ms",
-            width=8,  # 改回8，因为只显示数值和单位
-            anchor="e",
-            font=ModernTheme.NORMAL_FONT
+            width=80,
+            anchor="e"
         )
         self.delay_display.grid(row=0, column=1, sticky="e")
         
         current_row += 1
         
         # 快捷键设置
-        hotkey_label = ttk.Label(main_frame, text="触发快捷键", font=ModernTheme.BOLD_FONT)
+        hotkey_label = ctk.CTkLabel(main_frame, text="触发快捷键", 
+                                     font=("Segoe UI", 14, "bold"))
         hotkey_label.grid(row=current_row, column=0, sticky="w", pady=(0, 5))
         current_row += 1
         
         # 创建快捷键输入框架
-        hotkey_frame = ttk.Frame(main_frame)
+        hotkey_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
         hotkey_frame.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
         
-        # 创建快捷键显示/输入标签
+        # 创建快捷键显示按钮
         self.hotkey_var = tk.StringVar(value=self.config.get("hotkey", self.default_config["hotkey"]).upper())
-        self.hotkey_label = ttk.Label(
+        self.hotkey_button = ctk.CTkButton(
             hotkey_frame,
             text=f"{self.hotkey_var.get()}",
-            font=ModernTheme.NORMAL_FONT,
-            background=ModernTheme.BG_COLOR,
-            foreground=ModernTheme.ACCENT_COLOR,
-            padding=(5, 2)
+            width=100,
+            height=30,
+            command=self.start_hotkey_record
         )
-        self.hotkey_label.grid(row=0, column=0, sticky="w")
+        self.hotkey_button.grid(row=0, column=0, sticky="w")
         hotkey_frame.columnconfigure(0, weight=1)
         
-        # 绑定事件
-        self.hotkey_label.bind('<Button-1>', self.start_hotkey_record)
         self.recording_hotkey = False
         
         current_row += 1
         
         # 分隔线
-        separator = ttk.Separator(main_frame, orient="horizontal")
-        separator.grid(row=current_row, column=0, sticky="ew", pady=15)
+        separator_frame = ctk.CTkFrame(main_frame, height=2, fg_color="gray70")
+        separator_frame.grid(row=current_row, column=0, sticky="ew", pady=15)
         current_row += 1
         
         # 复选框
         self.auto_copy_var = tk.BooleanVar(value=self.config.get("auto_copy", self.default_config["auto_copy"]))
-        auto_copy_cb = ttk.Checkbutton(main_frame, 
+        auto_copy_cb = ctk.CTkCheckBox(main_frame, 
                                      text="自动复制选中文本 (默认开启)", 
                                      variable=self.auto_copy_var,
-                                     style="TCheckbutton")
+                                     command=self.update_config)
         auto_copy_cb.grid(row=current_row, column=0, sticky="w", pady=(0, 8))
         current_row += 1
         
         self.image_preprocess_var = tk.BooleanVar(value=self.config.get("image_preprocess", self.default_config.get("image_preprocess", False)))
-        preprocess_cb = ttk.Checkbutton(main_frame, 
+        preprocess_cb = ctk.CTkCheckBox(main_frame, 
                                      text="图像预处理 (增强对比度+锐化，适合模糊/低对比度文字)", 
                                      variable=self.image_preprocess_var,
-                                     style="TCheckbutton")
+                                     command=self.update_config)
         preprocess_cb.grid(row=current_row, column=0, sticky="w", pady=(0, 8))
         current_row += 1
         
         self.show_debug_var = tk.BooleanVar(value=self.config.get("show_debug", self.default_config["show_debug"]))
-        show_debug_cb = ttk.Checkbutton(main_frame, 
+        show_debug_cb = ctk.CTkCheckBox(main_frame, 
                                       text="显示调试信息 (默认关闭)", 
                                       variable=self.show_debug_var,
-                                      command=self.toggle_debug_log,
-                                      style="TCheckbutton")
+                                      command=lambda: (self.toggle_debug_log(), self.update_config()))
         show_debug_cb.grid(row=current_row, column=0, sticky="w", pady=(0, 8))
         current_row += 1
         
         # 调试日志文本框容器
-        self.debug_frame = ttk.Frame(main_frame)
-        self.debug_text = tk.Text(self.debug_frame, width=40, height=8, font=ModernTheme.NORMAL_FONT)
+        self.debug_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
+        self.debug_text = ctk.CTkTextbox(self.debug_frame, width=400, height=150)
         
         # 保存当前行号，用于调试框的位置
         self.last_row = current_row
-
-        # 为其他控件添加变更事件处理
-        engine_combo.bind('<<ComboboxSelected>>', lambda e: self.update_config())
-        
-        # 自动复制选项变更事件
-        auto_copy_cb.configure(command=self.update_config)
-        
-        # 调试显示选项变更事件
-        show_debug_cb.configure(command=lambda: (self.toggle_debug_log(), self.update_config()))
     
-    def start_hotkey_record(self, event):
+    def start_hotkey_record(self):
         """开始记录快捷键"""
         if not self.recording_hotkey:
             self.recording_hotkey = True
-            self.hotkey_label.configure(text="按下快捷键组合...", background=ModernTheme.HOVER_COLOR)
+            self.hotkey_button.configure(text="按下快捷键组合...")
             self.pressed_keys = set()
             
             # 绑定键盘事件到主窗口
             self.root.bind('<KeyPress>', self.on_hotkey_press)
             self.root.bind('<KeyRelease>', self.on_hotkey_release)
-            self.hotkey_label.focus_set()
+            self.hotkey_button.focus_set()
 
     def on_hotkey_press(self, event):
         """处理按键按下事件"""
@@ -379,7 +373,7 @@ class ConfigDialog:
         
         if self.pressed_keys:
             key_text = "+".join(sorted(self.pressed_keys))
-            self.hotkey_label.configure(text=key_text)
+            self.hotkey_button.configure(text=key_text)
 
     def on_hotkey_release(self, event):
         """处理按键释放事件"""
@@ -401,14 +395,12 @@ class ConfigDialog:
         # 如果所有键都释放了，完成快捷键设置
         if not self.pressed_keys:
             self.recording_hotkey = False
-            hotkey = self.hotkey_label.cget("text")
+            hotkey = self.hotkey_button.cget("text")
             if hotkey and hotkey != "按下快捷键组合...":
                 self.hotkey_var.set(hotkey)
                 # 实时更新配置
                 self.update_config()
             
-            # 恢复标签样式
-            self.hotkey_label.configure(background=ModernTheme.BG_COLOR)
             # 解绑键盘事件
             self.root.unbind('<KeyPress>')
             self.root.unbind('<KeyRelease>')

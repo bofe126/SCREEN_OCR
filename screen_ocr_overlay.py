@@ -6,6 +6,7 @@ import ctypes
 from ctypes import wintypes
 from PIL import Image, ImageTk, ImageDraw
 import tkinter as tk
+import customtkinter as ctk
 import logging
 import traceback
 import time
@@ -13,6 +14,10 @@ import queue
 import threading
 import sys
 from wechat_ocr_wrapper import get_wechat_ocr
+
+# 设置 CustomTkinter 外观
+ctk.set_appearance_mode("system")
+ctk.set_default_color_theme("blue")
 
 # 可选的 OCR 引擎依赖（动态导入）
 # PaddleOCR - 在 _get_text_positions_paddle 中导入

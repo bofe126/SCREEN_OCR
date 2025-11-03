@@ -158,7 +158,10 @@ class ConfigDialog:
             # 设置高DPI支持
             HighDPIApp.set_dpi_awareness()
             
+            # 创建窗口并立即移到屏幕外（防止白色闪烁）
             self.root = ctk.CTkToplevel()
+            self.root.geometry("+10000+10000")  # 在屏幕外创建和渲染
+            self.root.withdraw()  # 隐藏窗口
             self.root.title("Screen OCR 设置")
             
             # 获取DPI缩放比例
@@ -197,15 +200,18 @@ class ConfigDialog:
             # 微调窗口位置，稍微向左偏移
             x = max(0, x - int(window_width * 0.1))  # 向左偏移窗口宽度的10%
             
-            # 设置窗口大小和位置
-            self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+            # 保存目标位置，稍后再设置（避免在屏幕上显示）
+            self.target_geometry = f"{window_width}x{window_height}+{x}+{y}"
+            
+            # 暂时只设置大小，保持在屏幕外
+            self.root.geometry(f"{window_width}x{window_height}+10000+10000")
             self.root.resizable(False, False)
             
             # 设置窗口关闭处理
             self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
             
-            # 应用现代主题
-            ModernTheme.apply(self.root)
+            # 注意：CustomTkinter 自动处理主题，不需要 ModernTheme.apply
+            # ModernTheme.apply 是为传统 tkinter/ttk 设计的
             
             self.setup_ui()
         except Exception as e:
@@ -506,27 +512,47 @@ class ConfigDialog:
             return
             
         try:
-            # 将窗口置于最前
-            self.root.lift()
-            self.root.focus_force()
+            # 在屏幕外渲染所有组件
+            self.root.update_idletasks()
+            self.root.update()  # 确保 CustomTkinter 主题完全加载
             
-            # 运行主循环
-            self.root.mainloop()
-        except KeyboardInterrupt:
-            self.on_closing()
+            # 延迟后移到正确位置并显示
+            self.root.after(30, self._move_and_show)
+            
         except Exception as e:
             print(f"显示配置窗口时发生错误: {e}")
             self.on_closing()
+    
+    def _move_and_show(self):
+        """移动到目标位置并显示窗口"""
+        try:
+            # 移动到目标位置
+            if hasattr(self, 'target_geometry'):
+                self.root.geometry(self.target_geometry)
+            
+            # 显示窗口并置于最前
+            self.root.deiconify()
+            self.root.lift()
+            self.root.focus_force()
+        except:
+            pass
             
     def on_closing(self):
         """处理窗口关闭事件"""
         try:
-            if self.root and self.root.winfo_exists():
-                # 发送一个空的配置更新，通知SystemTray清理对话框
-                self.callback(self.config)
-                self.root.quit()
-                self.root.destroy()
-                self.root = None
+            if self.root:
+                try:
+                    if self.root.winfo_exists():
+                        # 发送配置更新，通知SystemTray
+                        self.callback(self.config)
+                        
+                        # 只销毁窗口，不要调用 quit()
+                        # quit() 会停止整个程序的主循环
+                        self.root.destroy()
+                except:
+                    pass
+                finally:
+                    self.root = None
         except Exception as e:
             print(f"关闭窗口时发生错误: {e}")
 
@@ -536,6 +562,7 @@ class SystemTray:
         self.icon = None
         self.dialog = None
         self.ocr = ocr_instance
+        self.creating_dialog = False  # 防止重复创建对话框
         
         # 检查OCR实例
         if not self.ocr or not hasattr(self.ocr, 'config_queue'):
@@ -544,19 +571,28 @@ class SystemTray:
     def _create_config_dialog(self):
         """在主线程中创建配置对话框"""
         try:
+            # 防止重复创建：如果正在创建中，直接返回
+            if self.creating_dialog:
+                return
+            
             # 如果已有对话框且窗口仍然存在，将其提到前台
             if (self.dialog and hasattr(self.dialog, 'root') and 
                 self.dialog.root and self.dialog.root.winfo_exists()):
+                # 如果窗口被隐藏，先显示它
+                self.dialog.root.deiconify()
                 self.dialog.root.lift()
                 self.dialog.root.focus_force()
                 return
+            
+            # 标记正在创建
+            self.creating_dialog = True
             
             # 确保之前的对话框被正确清理
             if self.dialog:
                 try:
                     if hasattr(self.dialog, 'root') and self.dialog.root:
-                        self.dialog.root.quit()
-                        self.dialog.root.destroy()
+                        if self.dialog.root.winfo_exists():
+                            self.dialog.root.destroy()
                 except:
                     pass
                 self.dialog = None
@@ -571,11 +607,14 @@ class SystemTray:
             if self.dialog:
                 try:
                     if hasattr(self.dialog, 'root') and self.dialog.root:
-                        self.dialog.root.quit()
-                        self.dialog.root.destroy()
+                        if self.dialog.root.winfo_exists():
+                            self.dialog.root.destroy()
                 except:
                     pass
                 self.dialog = None
+        finally:
+            # 创建完成，重置标志
+            self.creating_dialog = False
 
     def on_config_changed(self, new_config):
         """配置更改回调"""
@@ -690,9 +729,10 @@ class SystemTray:
         """退出程序"""
         try:
             # 关闭配置窗口
-            if self.dialog and hasattr(self.dialog, 'root') and self.dialog.root.winfo_exists():
+            if self.dialog and hasattr(self.dialog, 'root') and self.dialog.root:
                 try:
-                    self.dialog.root.destroy()
+                    if self.dialog.root.winfo_exists():
+                        self.dialog.root.destroy()
                 except:
                     pass
             self.dialog = None
@@ -797,75 +837,67 @@ class SystemTray:
     def _create_help_window(self):
         """在主线程中创建帮助窗口"""
         try:
-            # 创建帮助窗口
-            help_window = tk.Toplevel()
+            # 创建帮助窗口（在屏幕外，避免白色闪烁）
+            help_window = ctk.CTkToplevel()
+            help_window.geometry("+10000+10000")  # 屏幕外创建
+            help_window.withdraw()
             help_window.title("Screen OCR 使用说明")
-            help_window.geometry("500x350")  # 稍微增加窗口高度
-            
-            # 应用现代主题
-            ModernTheme.apply(help_window)
             
             # 创建主框架
-            main_frame = ttk.Frame(help_window, padding="30 25 30 25")
-            main_frame.pack(fill=tk.BOTH, expand=True)
+            main_frame = ctk.CTkFrame(help_window, fg_color="transparent")
+            main_frame.pack(fill=tk.BOTH, expand=True, padx=30, pady=25)
             
             # 创建标题
-            title_label = ttk.Label(
+            title_label = ctk.CTkLabel(
                 main_frame,
                 text="Screen OCR 使用说明",
-                style="Title.TLabel",
-                font=(ModernTheme.FONT_FAMILY, 20, "bold")
+                font=("Segoe UI", 20, "bold"),
+                text_color="#1f538d"
             )
             title_label.pack(pady=(0, 20))
             
             # 创建文本框
-            text = tk.Text(
+            text = ctk.CTkTextbox(
                 main_frame,
-                wrap=tk.WORD,
-                font=(ModernTheme.FONT_FAMILY, 11),
-                padx=25,
-                pady=15,
-                border=0,
-                background=ModernTheme.BG_COLOR,
-                foreground=ModernTheme.FG_COLOR
+                wrap="word",
+                font=("Microsoft YaHei UI", 11),
+                width=440,
+                height=250
             )
             text.pack(fill=tk.BOTH, expand=True)
             
-            # 定义标签样式
-            text.tag_configure("title", 
-                             font=(ModernTheme.FONT_FAMILY, 13, "bold"),
-                             foreground=ModernTheme.ACCENT_COLOR,
-                             spacing1=15,
-                             spacing3=10)
-            
-            text.tag_configure("bullet",
-                             lmargin1=25,
-                             lmargin2=40)
-            
             # 插入帮助文本
-            text.insert('end', "使用方法\n", "title")
-            text.insert('end', "• 按住快捷键（默认为ALT）不放，等待屏幕出现蓝色边框\n", "bullet")
-            text.insert('end', "• 继续按住直到识别完成（绿色边框）\n", "bullet")
-            text.insert('end', "• 拖动鼠标选择需要的文本，自动复制到剪贴板\n", "bullet")
-            text.insert('end', "• 松开快捷键即可退出\n\n", "bullet")
+            help_text = """使用方法
+
+• 按住快捷键（默认为ALT）不放，等待屏幕出现蓝色边框
+• 继续按住直到识别完成（绿色边框）
+• 拖动鼠标选择需要的文本，自动复制到剪贴板
+• 松开快捷键即可退出
+
+设置说明
+
+• 左键点击托盘图标打开设置界面
+• 可自定义快捷键（支持组合键如CTRL+SHIFT）
+• 可选择OCR引擎和调整触发延时
+"""
+            text.insert("1.0", help_text)
+            text.configure(state="disabled")  # 设置为只读
             
-            text.insert('end', "设置说明\n", "title")
-            text.insert('end', "• 在设置中可自定义快捷键（支持组合键如CTRL+SHIFT）\n", "bullet")
-            text.insert('end', "• 可选择OCR引擎和调整触发延时\n", "bullet")
-            
-            text.config(state='disabled')  # 设置为只读
-            
-            # 居中显示窗口
+            # 计算居中位置并显示
             help_window.update_idletasks()
-            width = help_window.winfo_width()
-            height = help_window.winfo_height()
-            x = (help_window.winfo_screenwidth() // 2) - (width // 2)
-            y = (help_window.winfo_screenheight() // 2) - (height // 2)
-            help_window.geometry(f'+{x}+{y}')
+            window_width = 500
+            window_height = 380
+            x = (help_window.winfo_screenwidth() // 2) - (window_width // 2)
+            y = (help_window.winfo_screenheight() // 2) - (window_height // 2)
             
-            # 设置窗口置顶
-            help_window.lift()
-            help_window.focus_force()
+            # 延迟显示（屏幕外渲染完成后再移动）
+            def show_help():
+                help_window.geometry(f"{window_width}x{window_height}+{x}+{y}")
+                help_window.deiconify()
+                help_window.lift()
+                help_window.focus_force()
+            
+            help_window.after(30, show_help)
             
         except Exception as e:
             print(f"创建帮助窗口时发生错误: {e}")

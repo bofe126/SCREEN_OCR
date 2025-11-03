@@ -30,7 +30,13 @@
 - 🎨 更好的对比度和可读性
 - 🎨 统一的蓝色主题色
 
-### 3. 覆盖窗口 (`screen_ocr_overlay.py`)
+### 3. 帮助窗口
+- ✅ 升级为 `ctk.CTkToplevel`
+- ✅ 使用 `ctk.CTkTextbox` 显示帮助信息
+- ✅ 应用屏幕外渲染技术，无白色闪烁
+- ✅ 与设置窗口保持一致的现代化风格
+
+### 4. 覆盖窗口 (`screen_ocr_overlay.py`)
 - 保持使用标准 `tkinter` 组件
 - 原因：需要特殊的透明效果和截图功能
 - 这不影响用户体验，覆盖窗口是临时的全屏层
@@ -132,17 +138,66 @@ self.icon = pystray.Icon(
 )
 
 # 新增左键点击处理方法
-def on_left_click(self, icon, item=None):
+def on_left_click(self, icon):
     """处理托盘图标左键点击事件"""
-    self.show_config(icon, item)
+    self.show_config(icon, None)
 ```
+
+### 窗口显示优化 ✨
+- ✅ **修复**：消除窗口打开/关闭时的白色闪烁
+- ✅ **修复**：防止快速点击托盘图标时创建多个窗口
+- ✅ 平滑的窗口显示和关闭动画
+
+**优化技术：**
+1. **屏幕外渲染**：窗口在屏幕外（+10000, +10000）完成所有渲染和主题加载
+2. **防重复创建**：使用 `creating_dialog` 标志防止并发创建窗口
+3. **延迟移动显示**：只在确认渲染完成后才移到目标位置并显示
+
+```python
+# 【创建阶段】在屏幕外创建和渲染
+self.root = ctk.CTkToplevel()
+self.root.geometry("+10000+10000")  # 在屏幕外创建
+self.root.withdraw()  # 隐藏窗口
+
+# 保存目标位置，但不立即移动
+self.target_geometry = f"{width}x{height}+{x}+{y}"
+
+# 添加所有UI组件...
+self.setup_ui()
+
+# 【显示阶段】
+def show(self):
+    # 1. 在屏幕外渲染所有UI
+    self.root.update_idletasks()
+    self.root.update()  # 确保 CustomTkinter 主题完全加载
+    
+    # 2. 延迟后移动并显示
+    self.root.after(30, self._move_and_show)
+
+def _move_and_show(self):
+    # 移到目标位置并显示
+    self.root.geometry(self.target_geometry)
+    self.root.deiconify()
+    self.root.lift()
+    self.root.focus_force()
+```
+
+**核心思想：**
+- **绝不在屏幕上显示未完成的窗口**：所有渲染都在屏幕外（+10000, +10000）完成
+- **延迟显示**：确保主题完全加载后才移到目标位置
+- **简单有效**：只需屏幕外渲染一个技术，无需其他复杂措施
+
+**重要技术细节：**
+- `CTkToplevel` 不应调用 `mainloop()`，会自动参与主窗口的事件循环
+- 关闭时只能用 `destroy()`，不能用 `quit()`（会停止整个程序）
+- 30ms 延迟足以让 CustomTkinter 完成主题渲染
 
 ## 未来改进
 
 可选的进一步升级（未包含在本次升级中）：
-- 帮助窗口也使用 CustomTkinter
 - 添加更多主题选项到设置界面
 - 添加自定义配色方案
+- 添加窗口淡入淡出动画效果
 
 ---
 

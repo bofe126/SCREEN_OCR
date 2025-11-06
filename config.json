@@ -2,6 +2,9 @@
     "trigger_delay_ms": 350,
     "hotkey": "ALT",
     "auto_copy": true,
-    "show_debug": true,
-    "image_preprocess": true
+    "show_debug": false,
+    "image_preprocess": false,
+    "first_run": true,
+    "show_welcome": true,
+    "show_startup_notification": true
 }

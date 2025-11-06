@@ -14,6 +14,7 @@ import queue
 import threading
 import sys
 from wechat_ocr_wrapper import get_wechat_ocr
+from splash_screen import SplashScreen, WelcomePage, StartupToast
 
 # 设置 CustomTkinter 外观
 ctk.set_appearance_mode("system")
@@ -46,6 +47,7 @@ class ScreenOCRTool:
     
     def __init__(self):
         print("初始化程序...")
+        
         # 设置高DPI支持
         try:
             ctypes.windll.shcore.SetProcessDpiAwareness(2)
@@ -63,12 +65,19 @@ class ScreenOCRTool:
         self.root = tk.Tk()
         self.root.withdraw()
         
+        # 显示启动画面（传入主窗口）
+        self.splash = SplashScreen(parent=self.root)
+        self.splash.show()
+        self.splash.update_progress(0.1, "初始化配置...")
+        
         # 初始化状态
         self.is_processing: bool = False
         self.current_screenshot = None
         self._running: bool = True
         self.key_press_time: float = 0
         self.cleanup_pending: bool = False
+        
+        self.splash.update_progress(0.2, "获取屏幕信息...")
         
         # 获取系统DPI缩放和屏幕尺寸
         self.dpi_scale: float = ctypes.windll.shcore.GetScaleFactorForDevice(0) / 100
@@ -82,6 +91,8 @@ class ScreenOCRTool:
         print(f"系统DPI缩放: {self.dpi_scale}")
         print(f"屏幕尺寸（物理像素）: {self.screen_width}x{self.screen_height}")
         
+        self.splash.update_progress(0.4, "设置键盘钩子...")
+        
         # 设置键盘钩子
         self.keyboard_hook_id = None
         print("开始设置键盘钩子...")
@@ -91,6 +102,8 @@ class ScreenOCRTool:
         # 添加选择模式配置
         self.selection_mode: str = 'text'  # 'text' 或 'region'
         
+        self.splash.update_progress(0.5, "加载配置文件...")
+        
         # 从配置文件加载配置
         try:
             from system_tray import SystemTray
@@ -99,6 +112,8 @@ class ScreenOCRTool:
         except Exception as e:
             print(f"加载配置失败，使用默认配置: {str(e)}")
             self.config = self.DEFAULT_CONFIG.copy()
+        
+        self.splash.update_progress(0.6, "初始化OCR引擎...")
         
         # 初始化OCR相关属性
         self._wechat_ocr = None
@@ -112,6 +127,7 @@ class ScreenOCRTool:
         def init_ocr_background():
             self.init_ocr_engine()
             self._ocr_initialized = True
+            self.splash.update_progress(0.9, "OCR引擎加载完成...")
         
         ocr_thread = threading.Thread(target=init_ocr_background, daemon=True)
         ocr_thread.start()
@@ -872,6 +888,9 @@ class ScreenOCRTool:
             # 启动状态检查
             self.root.after(50, check_state)
             
+            # 更新启动进度
+            self.splash.update_progress(0.95, "创建系统托盘...")
+            
             # 创建系统托盘
             from system_tray import SystemTray
             self.tray = SystemTray(self)
@@ -880,6 +899,12 @@ class ScreenOCRTool:
             tray_thread = threading.Thread(target=self.tray.run)
             tray_thread.daemon = True
             tray_thread.start()
+            
+            # 启动完成
+            self.splash.update_progress(1.0, "启动完成！")
+            
+            # 处理首次启动或后续启动
+            self._handle_startup_complete()
             
             # 设置程序退出处理
             def on_closing():
@@ -912,6 +937,48 @@ class ScreenOCRTool:
         finally:
             self._running = False
             self.cleanup()
+    
+    def _handle_startup_complete(self):
+        """处理启动完成后的逻辑"""
+        # 检查是否首次运行
+        is_first_run = self.config.get("first_run", True)
+        show_welcome = self.config.get("show_welcome", True)
+        show_notification = self.config.get("show_startup_notification", True)
+        
+        if is_first_run or show_welcome:
+            # 首次启动：显示欢迎页面
+            self.splash.close(delay_ms=500)
+            
+            def on_welcome_close(show_settings=False):
+                """欢迎页面关闭回调"""
+                # 更新配置
+                self.config["first_run"] = False
+                if hasattr(self, 'tray'):
+                    self.tray.save_config()
+                
+                # 如果用户点击了"详细设置"
+                if show_settings and hasattr(self, 'tray'):
+                    self.tray.show_config(None, None)
+            
+            # 在主线程中延迟显示欢迎页面（使用 after）
+            def show_welcome_in_main_thread():
+                welcome = WelcomePage(self.config, on_welcome_close)
+                welcome.show()
+            
+            # 使用 root.after 在主线程中延迟执行
+            self.root.after(600, show_welcome_in_main_thread)
+        else:
+            # 后续启动：关闭启动画面
+            self.splash.close(delay_ms=1000)
+            
+            # 可选：显示Toast通知（Toast使用独立的Tk，可以在线程中）
+            if show_notification:
+                def show_toast_delayed():
+                    time.sleep(1.2)
+                    toast = StartupToast(hotkey=self.hotkey)
+                    toast.show(duration_ms=3000)
+                
+                threading.Thread(target=show_toast_delayed, daemon=True).start()
     
     def reload_config(self):
         """重新加载配置"""

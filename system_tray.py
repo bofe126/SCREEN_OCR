@@ -12,10 +12,307 @@ import threading
 import win32api
 from cairosvg import svg2png
 from io import BytesIO
+import logging
+import sys
+from datetime import datetime
 
 # 设置 CustomTkinter 外观模式和主题
 ctk.set_appearance_mode("dark")  # 暗色模式（支持 "light", "dark", "system"）
 ctk.set_default_color_theme("blue")  # 蓝色主题（支持 "blue", "green", "dark-blue"）
+
+# 全局日志缓冲区（程序启动时就开始捕获）
+class GlobalLogBuffer:
+    """全局日志缓冲区，在程序启动时就开始捕获所有输出"""
+    def __init__(self):
+        self.buffer = []
+        self.max_size = 1000  # 最多保存1000条日志
+        self.text_widget = None  # 稍后设置
+        self.original_stdout = sys.stdout
+        self.original_stderr = sys.stderr
+        self.log_handler = None
+        self.stdout_handler = None
+        self.stderr_handler = None
+        self._capturing = False
+    
+    def start_capture(self):
+        """开始捕获日志"""
+        if self._capturing:
+            return
+        
+        self._capturing = True
+        
+        # 保存原始流（可能为 None，在窗口程序中）
+        self.original_stdout = sys.stdout
+        self.original_stderr = sys.stderr
+        
+        # 移除所有可能导致问题的 StreamHandler（指向 None 的）
+        root_logger = logging.getLogger()
+        handlers_to_remove = []
+        for handler in root_logger.handlers[:]:
+            if isinstance(handler, logging.StreamHandler):
+                # 检查 stream 是否为 None 或指向已替换的流
+                if handler.stream is None or handler.stream in (sys.stdout, sys.stderr):
+                    handlers_to_remove.append(handler)
+        
+        for handler in handlers_to_remove:
+            root_logger.removeHandler(handler)
+        
+        # 创建 stdout 捕获（即使 original_stdout 为 None 也能工作）
+        self.stdout_handler = BufferedStreamCapture(self, sys.stdout)
+        sys.stdout = self.stdout_handler
+        
+        # 创建 stderr 捕获（即使 original_stderr 为 None 也能工作）
+        self.stderr_handler = BufferedStreamCapture(self, sys.stderr)
+        sys.stderr = self.stderr_handler
+        
+        # 创建 logging 处理器
+        self.log_handler = BufferedLogHandler(self)
+        root_logger.setLevel(logging.DEBUG)
+        root_logger.addHandler(self.log_handler)
+    
+    def add_log(self, message, source="LOG"):
+        """添加日志到缓冲区"""
+        timestamp = datetime.now().strftime('%H:%M:%S')
+        log_entry = {
+            'timestamp': timestamp,
+            'message': message,
+            'source': source
+        }
+        self.buffer.append(log_entry)
+        
+        # 限制缓冲区大小
+        if len(self.buffer) > self.max_size:
+            self.buffer.pop(0)
+        
+        # 如果文本框已连接，立即显示
+        if self.text_widget:
+            self._append_to_widget(log_entry)
+    
+    def connect_widget(self, text_widget):
+        """连接文本框，显示所有历史日志"""
+        self.text_widget = text_widget
+        
+        # 如果传入 None，只是断开连接，不显示历史
+        if text_widget is None:
+            return
+        
+        # 显示所有历史日志
+        if self.buffer:
+            try:
+                self.text_widget.configure(state='normal')
+                for entry in self.buffer:
+                    formatted = f"{entry['timestamp']} - {entry['message']}"
+                    self.text_widget.insert('end', formatted + '\n')
+                self.text_widget.see('end')
+                self.text_widget.configure(state='disabled')
+            except:
+                pass
+    
+    def _append_to_widget(self, entry):
+        """添加新日志到文本框"""
+        if not self.text_widget:
+            return
+        
+        try:
+            formatted = f"{entry['timestamp']} - {entry['message']}"
+            def append():
+                try:
+                    # 再次检查，因为可能在此期间被设置为 None
+                    if not self.text_widget:
+                        return
+                    self.text_widget.configure(state='normal')
+                    self.text_widget.insert('end', formatted + '\n')
+                    self.text_widget.see('end')
+                    self.text_widget.configure(state='disabled')
+                except:
+                    pass
+            
+            self.text_widget.after(0, append)
+        except:
+            pass
+    
+    def stop_capture(self):
+        """停止捕获"""
+        if not self._capturing:
+            return
+        
+        self._capturing = False
+        
+        # 恢复原始流（如果存在）
+        if self.stdout_handler:
+            try:
+                sys.stdout = self.original_stdout if self.original_stdout else sys.__stdout__
+            except:
+                sys.stdout = sys.__stdout__
+        
+        if self.stderr_handler:
+            try:
+                sys.stderr = self.original_stderr if self.original_stderr else sys.__stderr__
+            except:
+                sys.stderr = sys.__stderr__
+        
+        # 移除日志处理器
+        if self.log_handler:
+            root_logger = logging.getLogger()
+            if self.log_handler in root_logger.handlers:
+                root_logger.removeHandler(self.log_handler)
+        
+        self.text_widget = None
+
+class BufferedStreamCapture:
+    """缓冲流捕获器"""
+    def __init__(self, buffer, original_stream):
+        self.buffer = buffer
+        self.original_stream = original_stream
+        self.line_buffer = ""
+    
+    def write(self, message):
+        """写入消息"""
+        # 安全地写入原始流（如果存在）
+        if self.original_stream:
+            try:
+                self.original_stream.write(message)
+                self.original_stream.flush()
+            except:
+                pass
+        
+        # 添加到缓冲区
+        if message:
+            self.line_buffer += message
+            if '\n' in self.line_buffer:
+                lines = self.line_buffer.split('\n')
+                self.line_buffer = lines[-1]
+                for line in lines[:-1]:
+                    if line.strip():
+                        self.buffer.add_log(line.strip(), "OUTPUT")
+    
+    def flush(self):
+        """刷新输出"""
+        if self.original_stream:
+            try:
+                self.original_stream.flush()
+            except:
+                pass
+        
+        # 如果缓冲区有内容，也输出
+        if self.line_buffer.strip():
+            self.buffer.add_log(self.line_buffer.strip(), "OUTPUT")
+            self.line_buffer = ""
+
+class BufferedLogHandler(logging.Handler):
+    """缓冲日志处理器"""
+    def __init__(self, buffer):
+        super().__init__()
+        self.buffer = buffer
+        self.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+    
+    def emit(self, record):
+        """安全地输出日志记录"""
+        try:
+            msg = self.format(record)
+            self.buffer.add_log(msg, "LOG")
+        except Exception:
+            # 静默处理异常，避免循环错误
+            pass
+
+# 创建全局日志缓冲区实例
+_global_log_buffer = GlobalLogBuffer()
+
+# 在模块加载时立即开始捕获
+_global_log_buffer.start_capture()
+
+class TextWidgetHandler(logging.Handler):
+    """自定义日志处理器，将日志输出到文本框"""
+    def __init__(self, text_widget):
+        super().__init__()
+        self.text_widget = text_widget
+        # 简化格式，只显示级别和消息
+        self.setFormatter(logging.Formatter('%(levelname)s - %(message)s'))
+    
+    def emit(self, record):
+        """输出日志记录"""
+        try:
+            msg = self.format(record)
+            # 使用 after 确保在主线程中更新UI
+            self.text_widget.after(0, lambda: self._append_log(msg))
+        except:
+            pass
+    
+    def _append_log(self, msg):
+        """在文本框中添加日志（主线程）"""
+        try:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            formatted_msg = f"{timestamp} - {msg}"
+            
+            self.text_widget.configure(state='normal')
+            self.text_widget.insert('end', formatted_msg + '\n')
+            self.text_widget.see('end')  # 自动滚动到底部
+            self.text_widget.configure(state='disabled')
+        except:
+            pass
+
+class PrintCapture:
+    """捕获 print 输出到文本框"""
+    def __init__(self, text_widget, original_stream):
+        self.text_widget = text_widget
+        self.original_stream = original_stream
+        self.buffer = ""  # 缓冲不完整的行
+    
+    def write(self, message):
+        """重定向 print 输出"""
+        try:
+            # 同时输出到原始 stdout/stderr（控制台）
+            if self.original_stream:
+                self.original_stream.write(message)
+                self.original_stream.flush()
+            
+            # 添加到缓冲区
+            if message:
+                self.buffer += message
+                
+                # 如果包含换行符，处理完整行
+                if '\n' in self.buffer:
+                    lines = self.buffer.split('\n')
+                    # 保留最后不完整的行在缓冲区
+                    self.buffer = lines[-1]
+                    # 处理完整的行
+                    for line in lines[:-1]:
+                        if line.strip():  # 忽略空行
+                            self._append_line(line)
+        except:
+            pass
+    
+    def flush(self):
+        """刷新输出"""
+        try:
+            if self.original_stream:
+                self.original_stream.flush()
+            
+            # 如果缓冲区有内容，也输出
+            if self.buffer.strip():
+                self._append_line(self.buffer)
+                self.buffer = ""
+        except:
+            pass
+    
+    def _append_line(self, line):
+        """添加一行到文本框"""
+        try:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            formatted_msg = f"{timestamp} - {line}"
+            
+            def append():
+                try:
+                    self.text_widget.configure(state='normal')
+                    self.text_widget.insert('end', formatted_msg + '\n')
+                    self.text_widget.see('end')
+                    self.text_widget.configure(state='disabled')
+                except:
+                    pass
+            
+            self.text_widget.after(0, append)
+        except:
+            pass
 
 class HighDPIApp:
     """高DPI支持"""
@@ -146,7 +443,6 @@ class ConfigDialog:
         self.callback = callback
         self.root = None
         self.default_config = {
-            "ocr_engine": "WeChatOCR",
             "trigger_delay_ms": 300,
             "hotkey": "alt",
             "auto_copy": True,
@@ -167,45 +463,40 @@ class ConfigDialog:
             # 获取DPI缩放比例
             dpi_scale = HighDPIApp.get_dpi_scale(self.root)
             
-            # 设置窗口大小和位置（考虑DPI缩放）
-            base_width = 400
-            base_height = 600
-            window_width = int(base_width * dpi_scale)
-            window_height = int(base_height * dpi_scale)
+            # 强制使用 Tkinter 的逻辑像素坐标系统（自动处理DPI）
+            # update_idletasks 确保窗口管理器已初始化
+            self.root.update_idletasks()
             
-            # 获取真实的屏幕尺寸
+            # 获取屏幕尺寸（逻辑像素）
             screen_width = self.root.winfo_screenwidth()
             screen_height = self.root.winfo_screenheight()
             
-            # 获取工作区尺寸（排除任务栏等）
-            try:
-                from win32api import GetMonitorInfo, MonitorFromPoint
-                monitor_info = GetMonitorInfo(MonitorFromPoint((0,0)))
-                work_area = monitor_info.get("Work")
-                if work_area:
-                    screen_width = work_area[2] - work_area[0]  # 工作区宽度
-                    screen_height = work_area[3] - work_area[1]  # 工作区高度
-                    # 计算窗口位置（考虑工作区偏移）
-                    x = work_area[0] + (screen_width - window_width) // 2
-                    y = work_area[1] + (screen_height - window_height) // 2
-            except:
-                # 如果获取失败，使用简单的居中计算
-                x = (screen_width - window_width) // 2
-                y = (screen_height - window_height) // 2
+            # 根据屏幕大小计算合适的窗口尺寸（使用逻辑像素）
+            # 窗口宽度：屏幕宽度的25%，最小400px，最大550px
+            # 窗口高度：屏幕高度的50%，最小500px，最大700px（减少了高度避免溢出）
+            window_width = max(400, min(550, int(screen_width * 0.25)))
+            window_height = max(500, min(700, int(screen_height * 0.50)))
             
-            # 确保窗口完全显示在屏幕内
-            x = max(0, min(x, screen_width - window_width))
-            y = max(0, min(y, screen_height - window_height))
+            # 确保窗口不会超出屏幕（留出50px边距）
+            max_width = screen_width - 100
+            max_height = screen_height - 100
+            window_width = min(window_width, max_width)
+            window_height = min(window_height, max_height)
             
-            # 微调窗口位置，稍微向左偏移
-            x = max(0, x - int(window_width * 0.1))  # 向左偏移窗口宽度的10%
+            # 简单直接的居中计算（使用Tkinter的屏幕尺寸）
+            x = max(50, (screen_width - window_width) // 2)
+            y = max(50, (screen_height - window_height) // 2)
             
             # 保存目标位置，稍后再设置（避免在屏幕上显示）
             self.target_geometry = f"{window_width}x{window_height}+{x}+{y}"
             
             # 暂时只设置大小，保持在屏幕外
             self.root.geometry(f"{window_width}x{window_height}+10000+10000")
-            self.root.resizable(False, False)
+            
+            # 设置最小窗口大小（防止缩得太小）
+            self.root.minsize(400, 500)
+            # 允许调整窗口大小
+            self.root.resizable(True, True)
             
             # 设置窗口关闭处理
             self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -237,19 +528,6 @@ class ConfigDialog:
         title_label.grid(row=0, column=0, sticky="w", pady=(0, 25))
         
         current_row = 1
-        
-        # OCR引擎选择
-        engine_label = ctk.CTkLabel(main_frame, text="OCR引擎", 
-                                     font=("Segoe UI", 14, "bold"))
-        engine_label.grid(row=current_row, column=0, sticky="w", pady=(0, 5))
-        current_row += 1
-        
-        self.engine_var = tk.StringVar(value=self.config.get("ocr_engine", self.default_config["ocr_engine"]))
-        engine_combo = ctk.CTkOptionMenu(main_frame, variable=self.engine_var,
-                                          values=["WeChatOCR", "PaddleOCR"],
-                                          command=lambda x: self.update_config())
-        engine_combo.grid(row=current_row, column=0, sticky="ew", pady=(0, 15))
-        current_row += 1
         
         # 触发延时设置
         delay_label = ctk.CTkLabel(main_frame, text="触发延时 (ms)", 
@@ -342,7 +620,43 @@ class ConfigDialog:
         
         # 调试日志文本框容器
         self.debug_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        self.debug_text = ctk.CTkTextbox(self.debug_frame, width=400, height=150)
+        
+        # 创建日志文本框和按钮的容器
+        log_container = ctk.CTkFrame(self.debug_frame, fg_color="transparent")
+        log_container.grid(row=0, column=0, sticky="nsew")
+        
+        self.debug_text = ctk.CTkTextbox(log_container, width=400, height=150, wrap="word")
+        
+        # 添加测试日志按钮
+        button_frame = ctk.CTkFrame(self.debug_frame, fg_color="transparent")
+        button_frame.grid(row=1, column=0, sticky="ew", pady=(5, 0))
+        
+        test_log_btn = ctk.CTkButton(
+            button_frame, 
+            text="生成测试日志",
+            width=120,
+            height=28,
+            command=self._generate_test_logs
+        )
+        test_log_btn.pack(side="left", padx=5)
+        
+        clear_log_btn = ctk.CTkButton(
+            button_frame,
+            text="清空日志",
+            width=100,
+            height=28,
+            command=self._clear_logs
+        )
+        clear_log_btn.pack(side="left", padx=5)
+        
+        # 初始化日志处理器（但先不添加）
+        self.log_handler = None
+        self.stdout_handler = None
+        self.stderr_handler = None
+        
+        # 如果启动时调试模式已开启，立即显示调试框
+        if self.show_debug_var.get():
+            self.root.after(100, self.toggle_debug_log)
         
         # 保存当前行号，用于调试框的位置
         self.last_row = current_row
@@ -416,46 +730,145 @@ class ConfigDialog:
             # 显示调试日志框
             self.debug_frame.grid(row=self.last_row, column=0, sticky="nsew", pady=(0, 8))
             self.debug_text.grid(row=0, column=0, sticky="nsew")
-            scrollbar = ttk.Scrollbar(self.debug_frame, orient="vertical", command=self.debug_text.yview)
-            scrollbar.grid(row=0, column=1, sticky="ns")
-            self.debug_text.configure(yscrollcommand=scrollbar.set)
             
-            # 设置调试框的大小
+            # 设置调试框的大小和布局
             self.debug_frame.columnconfigure(0, weight=1)
             self.debug_frame.rowconfigure(0, weight=1)
-            self.debug_text.configure(height=8)
+            
+            # 启动日志捕获
+            self._start_log_capture()
             
             # 更新窗口大小后重新计算位置
             self.root.update_idletasks()
             self.center_window()
         else:
+            # 停止日志捕获
+            self._stop_log_capture()
+            
             # 隐藏调试日志框
             self.debug_frame.grid_remove()
             # 更新窗口大小后重新计算位置
             self.root.update_idletasks()
             self.center_window()
+    
+    def _start_log_capture(self):
+        """启动日志捕获（连接到全局缓冲区）"""
+        try:
+            # 清空文本框
+            self.debug_text.configure(state='normal')
+            self.debug_text.delete('1.0', 'end')
+            
+            # 添加欢迎信息
+            welcome_msg = f"=== 调试日志窗口打开于 {datetime.now().strftime('%H:%M:%S')} ===\n"
+            welcome_msg += "显示从程序启动以来的所有日志\n"
+            self.debug_text.insert('1.0', welcome_msg)
+            self.debug_text.configure(state='disabled')
+            
+            # 连接到全局日志缓冲区（会自动显示所有历史日志）
+            _global_log_buffer.connect_widget(self.debug_text)
+            
+            # 标记已连接
+            self.log_handler = True  # 标记为已连接
+            
+        except Exception as e:
+            # 使用原始 stdout 输出错误（避免循环）
+            try:
+                sys.__stdout__.write(f"启动日志捕获失败: {e}\n")
+            except:
+                pass
+    
+    def _stop_log_capture(self):
+        """停止日志捕获（断开与全局缓冲区的连接）"""
+        try:
+            # 断开与文本框的连接
+            if self.log_handler:
+                _global_log_buffer.connect_widget(None)
+                self.log_handler = None
+        except Exception as e:
+            # 注意：这里可能 print 已经被重定向了，所以使用原始 stdout
+            try:
+                sys.__stdout__.write(f"停止日志捕获失败: {e}\n")
+            except:
+                pass
+    
+    def _add_log(self, message, level="INFO"):
+        """直接添加日志到文本框"""
+        try:
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            formatted_msg = f"{timestamp} - {level} - {message}"
+            
+            self.debug_text.configure(state='normal')
+            self.debug_text.insert('end', formatted_msg + '\n')
+            self.debug_text.see('end')
+            self.debug_text.configure(state='disabled')
+        except:
+            pass
+    
+    def _generate_test_logs(self):
+        """生成测试日志"""
+        try:
+            self._add_log("=== 开始测试日志生成 ===")
+            
+            # 测试不同级别的日志
+            logging.debug("这是一条 DEBUG 级别的日志")
+            logging.info("这是一条 INFO 级别的日志")
+            logging.warning("这是一条 WARNING 级别的日志")
+            logging.error("这是一条 ERROR 级别的日志")
+            
+            # 测试 print 输出（stdout）
+            print("这是通过 print() 输出的消息")
+            print("多行测试：")
+            print("  - 第一行")
+            print("  - 第二行")
+            
+            # 测试 stderr 输出
+            import sys
+            sys.stderr.write("这是一条 stderr 错误消息\n")
+            
+            # 模拟配置信息
+            self._add_log(f"OCR 引擎: WeChatOCR")
+            self._add_log(f"触发延时: {self.config.get('trigger_delay_ms', 'N/A')} ms")
+            self._add_log(f"快捷键: {self.config.get('hotkey', 'N/A')}")
+            
+            # 测试异常输出
+            try:
+                raise ValueError("这是一个测试异常")
+            except Exception as e:
+                logging.error(f"捕获到测试异常: {e}")
+            
+            self._add_log("=== 测试日志生成完成 ===")
+            
+        except Exception as e:
+            self._add_log(f"生成测试日志失败: {e}", "ERROR")
+    
+    def _clear_logs(self):
+        """清空日志"""
+        try:
+            self.debug_text.configure(state='normal')
+            self.debug_text.delete('1.0', 'end')
+            
+            welcome_msg = f"=== 日志已清空于 {datetime.now().strftime('%H:%M:%S')} ===\n"
+            self.debug_text.insert('1.0', welcome_msg)
+            self.debug_text.configure(state='disabled')
+            
+            logging.info("日志已清空")
+        except Exception as e:
+            print(f"清空日志失败: {e}")
 
     def center_window(self):
-        # 获取DPI缩放比例
-        dpi_scale = HighDPIApp.get_dpi_scale(self.root)
-        
+        """将窗口居中显示"""
         # 获取窗口当前大小
+        self.root.update_idletasks()
         window_width = self.root.winfo_width()
         window_height = self.root.winfo_height()
         
-        # 获取屏幕工作区域（排除任务栏）
-        monitor_info = win32api.GetMonitorInfo(win32api.MonitorFromWindow(self.root.winfo_id()))
-        work_area = monitor_info["Work"]
-        screen_width = work_area[2] - work_area[0]
-        screen_height = work_area[3] - work_area[1]
+        # 获取屏幕尺寸（逻辑像素）
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
         
-        # 计算窗口位置，稍微向左偏移以平衡视觉效果
-        x = work_area[0] + (screen_width - window_width) // 2 - int(50 * dpi_scale)
-        y = work_area[1] + (screen_height - window_height) // 2
-        
-        # 确保窗口完全在屏幕内
-        x = max(work_area[0], min(x, work_area[2] - window_width))
-        y = max(work_area[1], min(y, work_area[3] - window_height))
+        # 居中计算，确保不溢出屏幕
+        x = max(0, min((screen_width - window_width) // 2, screen_width - window_width))
+        y = max(0, min((screen_height - window_height) // 2, screen_height - window_height))
         
         # 设置窗口位置
         self.root.geometry(f"+{x}+{y}")
@@ -463,13 +876,12 @@ class ConfigDialog:
     def update_config(self):
         """实时更新配置"""
         self.config.update({
-            "ocr_engine": self.engine_var.get(),
             "trigger_delay_ms": self.delay_var.get(),
             "hotkey": self.hotkey_var.get(),
             "auto_copy": self.auto_copy_var.get(),
             "image_preprocess": self.image_preprocess_var.get(),
             "show_debug": self.show_debug_var.get(),
-            "debug_log": self.debug_text.get('1.0', 'end-1c') if self.show_debug_var.get() else ""
+            # 注意：不保存日志内容到配置，日志是临时的
         })
         # 调用回调函数实时更新配置
         self.callback(self.config)
@@ -534,12 +946,40 @@ class ConfigDialog:
             self.root.deiconify()
             self.root.lift()
             self.root.focus_force()
+            
+            # 再次更新确保位置正确（有时需要窗口显示后才能准确获取位置）
+            self.root.after(50, self._final_center)
+        except:
+            pass
+    
+    def _final_center(self):
+        """最终居中调整（窗口显示后）"""
+        try:
+            self.root.update_idletasks()
+            
+            # 获取窗口实际大小
+            window_width = self.root.winfo_width()
+            window_height = self.root.winfo_height()
+            
+            # 获取屏幕尺寸
+            screen_width = self.root.winfo_screenwidth()
+            screen_height = self.root.winfo_screenheight()
+            
+            # 重新计算居中位置，确保不溢出屏幕
+            x = max(0, min((screen_width - window_width) // 2, screen_width - window_width))
+            y = max(0, min((screen_height - window_height) // 2, screen_height - window_height))
+            
+            # 设置最终位置
+            self.root.geometry(f"+{x}+{y}")
         except:
             pass
             
     def on_closing(self):
         """处理窗口关闭事件"""
         try:
+            # 停止日志捕获
+            self._stop_log_capture()
+            
             if self.root:
                 try:
                     if self.root.winfo_exists():
@@ -779,8 +1219,10 @@ class SystemTray:
         """保存配置到文件"""
         config_path = os.path.join(os.path.dirname(__file__), 'config.json')
         try:
+            # 过滤掉不应该保存的临时字段（如 debug_log）
+            config_to_save = {k: v for k, v in self.config.items() if k != 'debug_log'}
             with open(config_path, 'w', encoding='utf-8') as f:
-                json.dump(self.config, f, indent=4, ensure_ascii=False)
+                json.dump(config_to_save, f, indent=4, ensure_ascii=False)
             print("配置已保存")
             
             # 通知OCR实例重新加载配置
@@ -792,7 +1234,6 @@ class SystemTray:
     def get_default_config(self):
         """获取默认配置"""
         return {
-            "ocr_engine": "WeChatOCR",
             "trigger_delay_ms": 300,
             "hotkey": "alt",
             "auto_copy": True,
@@ -885,10 +1326,25 @@ class SystemTray:
             
             # 计算居中位置并显示
             help_window.update_idletasks()
-            window_width = 500
-            window_height = 380
-            x = (help_window.winfo_screenwidth() // 2) - (window_width // 2)
-            y = (help_window.winfo_screenheight() // 2) - (window_height // 2)
+            
+            # 获取屏幕尺寸（逻辑像素）
+            screen_width = help_window.winfo_screenwidth()
+            screen_height = help_window.winfo_screenheight()
+            
+            # 根据屏幕大小计算合适的窗口尺寸
+            # 帮助窗口相对较小
+            window_width = max(450, min(550, int(screen_width * 0.25)))
+            window_height = max(350, min(450, int(screen_height * 0.40)))
+            
+            # 确保窗口不会超出屏幕（留出50px边距）
+            max_width = screen_width - 100
+            max_height = screen_height - 100
+            window_width = min(window_width, max_width)
+            window_height = min(window_height, max_height)
+            
+            # 居中计算，确保不溢出屏幕
+            x = max(0, min((screen_width - window_width) // 2, screen_width - window_width))
+            y = max(0, min((screen_height - window_height) // 2, screen_height - window_height))
             
             # 延迟显示（屏幕外渲染完成后再移动）
             def show_help():
@@ -896,6 +1352,30 @@ class SystemTray:
                 help_window.deiconify()
                 help_window.lift()
                 help_window.focus_force()
+                # 再次调整确保居中（窗口显示后可能会有内容调整）
+                help_window.after(50, lambda: center_help_window(help_window))
+            
+            def center_help_window(window):
+                """帮助窗口最终居中调整"""
+                try:
+                    window.update_idletasks()
+                    
+                    # 获取窗口实际大小
+                    actual_width = window.winfo_width()
+                    actual_height = window.winfo_height()
+                    
+                    # 获取屏幕尺寸
+                    scr_width = window.winfo_screenwidth()
+                    scr_height = window.winfo_screenheight()
+                    
+                    # 重新计算居中位置，确保不溢出屏幕
+                    new_x = max(0, min((scr_width - actual_width) // 2, scr_width - actual_width))
+                    new_y = max(0, min((scr_height - actual_height) // 2, scr_height - actual_height))
+                    
+                    # 设置最终位置
+                    window.geometry(f"+{new_x}+{new_y}")
+                except:
+                    pass
             
             help_window.after(30, show_help)
             

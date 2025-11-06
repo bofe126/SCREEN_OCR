@@ -1,9 +1,7 @@
 {
-    "ocr_engine": "WeChatOCR",
     "trigger_delay_ms": 350,
     "hotkey": "ALT",
     "auto_copy": true,
-    "show_debug": false,
-    "debug_log": "",
-    "image_preprocess": false
+    "show_debug": true,
+    "image_preprocess": true
 }

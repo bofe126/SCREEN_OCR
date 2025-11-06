@@ -32,9 +32,12 @@ class WeChatOCRWrapper:
         self.ocr_exe_path = None
         self.wechat_dir = None
         self.initialized = False
+        self.error_message = None  # 保存详细错误信息
         
         if not WECHAT_OCR_AVAILABLE:
-            logging.error("wcocr 模块未安装")
+            self.error_message = "wcocr 模块未安装"
+            logging.error("❌ wcocr 模块未安装")
+            logging.error("   请从 https://github.com/swigger/wechat-ocr 下载 wcocr.pyd")
             return
         
         # 查找 WeChatOCR.exe 和微信目录路径
@@ -43,8 +46,8 @@ class WeChatOCRWrapper:
         
         if self.ocr_exe_path and self.wechat_dir:
             try:
-                logging.info(f"找到 WeChatOCR.exe: {self.ocr_exe_path}")
-                logging.info(f"找到微信目录: {self.wechat_dir}")
+                logging.info(f"✓ 找到 WeChatOCR: {self.ocr_exe_path}")
+                logging.info(f"✓ 找到微信目录: {self.wechat_dir}")
                 # 初始化 wcocr
                 wcocr.init(self.ocr_exe_path, self.wechat_dir)
                 # 等待初始化完成（WeChatOCR 初始化是异步的）
@@ -60,79 +63,179 @@ class WeChatOCRWrapper:
                     if waited >= 1.0:  # 至少等待1秒
                         break
                 self.initialized = True
-                logging.info(f"WeChatOCR 初始化完成 (耗时 {waited:.1f}秒)")
+                logging.info(f"✓ WeChatOCR 初始化完成 (耗时 {waited:.1f}秒)")
             except Exception as e:
-                logging.error(f"初始化 WeChatOCR 失败: {str(e)}")
+                self.error_message = f"初始化失败: {str(e)}"
+                logging.error(f"❌ 初始化 WeChatOCR 失败: {str(e)}")
                 import traceback
                 traceback.print_exc()
                 self.initialized = False
         else:
+            # 详细的错误信息
+            error_parts = []
             if not self.ocr_exe_path:
-                logging.warning("未找到 WeChatOCR.exe，请确保已安装微信客户端")
+                error_parts.append("未找到 WeChatOCR.exe")
+                logging.error("❌ 未找到 WeChatOCR.exe")
+                logging.error("   → 请确保已安装微信客户端（Windows 桌面版）")
+                logging.error("   → 支持微信 3.x 和 4.x 版本")
+                logging.error("   → 下载地址: https://weixin.qq.com/")
             if not self.wechat_dir:
-                logging.warning("未找到微信目录")
+                error_parts.append("未找到微信目录")
+                logging.error("❌ 未找到微信运行目录")
+            
+            self.error_message = "、".join(error_parts)
+            
+            # 提供解决方案
+            logging.info("")
+            logging.info("💡 WeChatOCR 使用说明:")
+            logging.info("   1. WeChatOCR 依赖本地安装的微信客户端")
+            logging.info("   2. 每台电脑都需要单独安装微信")
+            logging.info("   3. 安装后请在微信中使用一次'提取图中文字'功能以下载OCR插件")
+            logging.info("")
     
     def _find_wechat_ocr_exe(self) -> Optional[str]:
         """
         自动查找 WeChatOCR.exe 的完整路径
         返回: WeChatOCR.exe 的完整路径，如果未找到则返回 None
         """
-        # 方法1: 从 APPDATA 查找（最常见的位置）
+        all_candidates = []
+        
+        # 策略1: APPDATA 路径（最快，最常见）
         appdata = os.getenv('APPDATA')
         if appdata:
-            # 微信 3.x 路径
-            base_path = Path(appdata) / "Tencent" / "WeChat" / "XPlugin" / "Plugins" / "WeChatOCR"
-            if base_path.exists():
-                # 查找版本号目录
-                version_pattern = re.compile(r'^\d+$')
-                for version_dir in sorted(base_path.iterdir(), reverse=True):  # 从最新版本开始查找
-                    if version_dir.is_dir() and version_pattern.match(version_dir.name):
-                        # 检查 extracted 子目录
-                        ocr_exe = version_dir / "extracted" / "WeChatOCR.exe"
-                        if ocr_exe.exists():
-                            return str(ocr_exe)
-                        # 直接在版本目录下
-                        ocr_exe = version_dir / "WeChatOCR.exe"
-                        if ocr_exe.exists():
-                            return str(ocr_exe)
-            
-            # 微信 4.x 路径 (使用 wxocr.dll)
-            base_path_4x = Path(appdata) / "Tencent" / "xwechat" / "XPlugin" / "plugins" / "WeChatOcr"
-            if base_path_4x.exists():
-                version_pattern = re.compile(r'^\d+$')
-                for version_dir in sorted(base_path_4x.iterdir(), reverse=True):
-                    if version_dir.is_dir() and version_pattern.match(version_dir.name):
-                        ocr_dll = version_dir / "extracted" / "wxocr.dll"
-                        if ocr_dll.exists():
-                            return str(ocr_dll)
+            candidates = [
+                # 微信 3.x
+                Path(appdata) / "Tencent" / "WeChat" / "XPlugin" / "Plugins" / "WeChatOCR",
+                # 微信 4.x
+                Path(appdata) / "Tencent" / "xwechat" / "XPlugin" / "plugins" / "WeChatOcr",
+            ]
+            for base_path in candidates:
+                all_candidates.extend(self._scan_ocr_directory(base_path))
         
-        # 方法2: 从注册表查找微信安装路径
+        # 策略2: 注册表路径（可能有多个注册表项）
+        registry_paths = self._get_wechat_from_registry()
+        for reg_path in registry_paths:
+            plugin_paths = [
+                Path(reg_path) / "XPlugin" / "Plugins" / "WeChatOCR",
+                Path(reg_path) / "XPlugin" / "plugins" / "WeChatOcr",
+            ]
+            for plugin_path in plugin_paths:
+                all_candidates.extend(self._scan_ocr_directory(plugin_path))
+        
+        # 策略3: 常见安装位置（仅在前两种方法失败时使用）
+        if not all_candidates:
+            common_bases = []
+            for drive in ['C', 'D', 'E']:
+                common_bases.extend([
+                    Path(f"{drive}:/Program Files/Tencent/WeChat"),
+                    Path(f"{drive}:/Program Files (x86)/Tencent/WeChat"),
+                ])
+            for base in common_bases:
+                if base.exists():
+                    plugin_paths = [
+                        base / "XPlugin" / "Plugins" / "WeChatOCR",
+                        base / "XPlugin" / "plugins" / "WeChatOcr",
+                    ]
+                    for plugin_path in plugin_paths:
+                        all_candidates.extend(self._scan_ocr_directory(plugin_path))
+        
+        # 返回优先级最高的候选（版本号最大的）
+        return self._select_best_candidate(all_candidates)
+    
+    def _get_wechat_from_registry(self) -> List[str]:
+        """从注册表获取微信安装路径"""
+        paths = []
         try:
             import winreg
-            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r"Software\Tencent\WeChat")
-            install_path, _ = winreg.QueryValueEx(key, "InstallPath")
-            winreg.CloseKey(key)
+            # 尝试多个可能的注册表位置
+            registry_keys = [
+                (winreg.HKEY_CURRENT_USER, r"Software\Tencent\WeChat"),
+                (winreg.HKEY_LOCAL_MACHINE, r"Software\Tencent\WeChat"),
+                (winreg.HKEY_LOCAL_MACHINE, r"Software\WOW6432Node\Tencent\WeChat"),
+            ]
             
-            # 在微信安装目录下查找 WeChatOCR
-            wechat_path = Path(install_path)
-            
-            # 检查 XPlugin 目录
-            plugin_path = wechat_path / "XPlugin" / "Plugins" / "WeChatOCR"
-            if plugin_path.exists():
-                version_pattern = re.compile(r'^\d+$')
-                for version_dir in sorted(plugin_path.iterdir(), reverse=True):
-                    if version_dir.is_dir() and version_pattern.match(version_dir.name):
-                        ocr_exe = version_dir / "extracted" / "WeChatOCR.exe"
-                        if ocr_exe.exists():
-                            return str(ocr_exe)
-                        ocr_exe = version_dir / "WeChatOCR.exe"
-                        if ocr_exe.exists():
-                            return str(ocr_exe)
+            for root, subkey in registry_keys:
+                try:
+                    key = winreg.OpenKey(root, subkey)
+                    install_path, _ = winreg.QueryValueEx(key, "InstallPath")
+                    winreg.CloseKey(key)
+                    if install_path and install_path not in paths:
+                        paths.append(install_path)
+                except:
+                    continue
+        except:
+            pass
+        return paths
+    
+    def _scan_ocr_directory(self, base_path: Path) -> List[tuple]:
+        """
+        扫描 OCR 目录，返回所有找到的 OCR 文件
+        返回: [(文件路径, 版本号), ...]
+        """
+        candidates = []
+        if not base_path.exists():
+            return candidates
+        
+        try:
+            # 遍历版本目录（纯数字或带点的版本号）
+            for version_dir in base_path.iterdir():
+                if not version_dir.is_dir():
+                    continue
                 
+                # 提取版本号用于排序
+                version_str = version_dir.name
+                version_num = self._parse_version(version_str)
+                if version_num is None:
+                    continue
+                
+                # 检查可能的文件位置
+                possible_files = [
+                    version_dir / "extracted" / "WeChatOCR.exe",
+                    version_dir / "WeChatOCR.exe",
+                    version_dir / "extracted" / "wxocr.dll",
+                    version_dir / "wxocr.dll",
+                ]
+                
+                for file_path in possible_files:
+                    if file_path.exists():
+                        candidates.append((str(file_path), version_num))
+                        break  # 找到一个就够了，不需要继续
         except:
             pass
         
+        return candidates
+    
+    def _parse_version(self, version_str: str) -> Optional[int]:
+        """
+        解析版本号字符串为数字，用于排序
+        支持: "7846926", "3.9.10.19", "4.0.0.26" 等格式
+        """
+        # 纯数字版本号
+        if version_str.isdigit():
+            return int(version_str)
+        
+        # 带点的版本号（如 3.9.10.19）
+        if re.match(r'^\d+(\.\d+)*$', version_str):
+            # 转换为可比较的数字: 3.9.10.19 -> 3009010019
+            parts = version_str.split('.')
+            try:
+                return int(''.join(f"{int(p):03d}" for p in parts))
+            except:
+                pass
+        
         return None
+    
+    def _select_best_candidate(self, candidates: List[tuple]) -> Optional[str]:
+        """
+        从候选列表中选择最佳的（版本号最大的）
+        candidates: [(文件路径, 版本号), ...]
+        """
+        if not candidates:
+            return None
+        
+        # 按版本号降序排序
+        candidates.sort(key=lambda x: x[1], reverse=True)
+        return candidates[0][0]
     
     def _find_wechat_dir(self) -> Optional[str]:
         """
@@ -157,26 +260,36 @@ class WeChatOCRWrapper:
                 parent = install_path.parent  # Tencent 目录
                 weixin_base = parent / "Weixin"
                 if weixin_base.exists():
-                    # 查找版本号目录 (如 4.0.0.26)
+                    # 查找版本号目录 (如 4.0.0.26, 4.1.0.34)
                     version_pattern = re.compile(r'^\d+\.\d+\.\d+\.\d+$')
                     for version_dir in sorted(weixin_base.iterdir(), reverse=True):
                         if version_dir.is_dir() and version_pattern.match(version_dir.name):
                             logging.info(f"找到微信 4.0 运行时目录: {version_dir}")
                             return str(version_dir)
-                # 微信 4.0 必须找到 Weixin\版本号 目录，否则继续往下找
-                pass
+                
+                # 也尝试在注册表路径的直接父目录查找
+                # 某些安装方式 Weixin 目录可能在 Program Files 下
+                for possible_parent in [parent, install_path.parent.parent]:
+                    weixin_base = possible_parent / "Weixin"
+                    if weixin_base.exists():
+                        version_pattern = re.compile(r'^\d+\.\d+\.\d+\.\d+$')
+                        for version_dir in sorted(weixin_base.iterdir(), reverse=True):
+                            if version_dir.is_dir() and version_pattern.match(version_dir.name):
+                                logging.info(f"找到微信 4.0 运行时目录: {version_dir}")
+                                return str(version_dir)
             else:
                 # 不是微信 4.0，返回注册表路径
                 if install_path.exists():
                     return str(install_path)
                 
-        except:
+        except Exception as e:
+            logging.debug(f"注册表查找失败: {e}")
             pass
         
         # 方法2: 在常见安装位置查找
         # 获取所有可能的驱动器
         drives = []
-        for letter in 'CDEFGHIJ':
+        for letter in 'CDEFGHIJKLMNOPQRSTUVWXYZ':
             drive = Path(f"{letter}:\\")
             if drive.exists():
                 drives.append(drive)
@@ -184,27 +297,48 @@ class WeChatOCRWrapper:
         for drive in drives:
             if is_wechat_4:
                 # 微信 4.0: 查找 Weixin\x.x.x.x
-                weixin_base = drive / "Program Files" / "Tencent" / "Weixin"
-                if weixin_base.exists():
-                    version_pattern = re.compile(r'^\d+\.\d+\.\d+\.\d+$')
-                    for version_dir in sorted(weixin_base.iterdir(), reverse=True):
-                        if version_dir.is_dir() and version_pattern.match(version_dir.name):
-                            logging.info(f"找到微信 4.0 运行时目录: {version_dir}")
-                            return str(version_dir)
+                # 支持多种可能的路径结构
+                weixin_paths = [
+                    # 标准安装路径
+                    drive / "Program Files" / "Tencent" / "Weixin",
+                    drive / "Program Files (x86)" / "Tencent" / "Weixin",
+                    # 直接安装在根目录或自定义路径
+                    drive / "Weixin",
+                    drive / "WeChat" / "Weixin",
+                    drive / "Tencent" / "Weixin",
+                    # 相对路径解析
+                    drive / "Program Files" / "Tencent" / "WeChat" / ".." / "Weixin",
+                ]
                 
-                # 也尝试 Program Files (x86)
-                weixin_base_x86 = drive / "Program Files (x86)" / "Tencent" / "Weixin"
-                if weixin_base_x86.exists():
-                    version_pattern = re.compile(r'^\d+\.\d+\.\d+\.\d+$')
-                    for version_dir in sorted(weixin_base_x86.iterdir(), reverse=True):
-                        if version_dir.is_dir() and version_pattern.match(version_dir.name):
-                            logging.info(f"找到微信 4.0 运行时目录: {version_dir}")
-                            return str(version_dir)
+                for weixin_base in weixin_paths:
+                    try:
+                        weixin_base = weixin_base.resolve()  # 解析相对路径
+                        if weixin_base.exists():
+                            # 首先查找版本号子目录
+                            version_pattern = re.compile(r'^\d+\.\d+\.\d+\.\d+$')
+                            for version_dir in sorted(weixin_base.iterdir(), reverse=True):
+                                if version_dir.is_dir() and version_pattern.match(version_dir.name):
+                                    logging.info(f"找到微信 4.0 运行时目录: {version_dir}")
+                                    return str(version_dir)
+                            
+                            # 如果没有版本号子目录，检查是否直接是运行目录（包含 WeChat.exe 或类似文件）
+                            wechat_exe_patterns = ['WeChat.exe', 'WeChatApp.exe', 'WeChatAppEx.exe']
+                            for pattern in wechat_exe_patterns:
+                                if (weixin_base / pattern).exists():
+                                    logging.info(f"找到微信 4.0 运行时目录（直接路径）: {weixin_base}")
+                                    return str(weixin_base)
+                    except Exception as e:
+                        logging.debug(f"检查路径失败 {weixin_base}: {e}")
+                        continue
             else:
                 # 微信 3.x: 查找 WeChat 目录
                 common_paths = [
+                    # 标准安装路径
                     drive / "Program Files" / "Tencent" / "WeChat",
                     drive / "Program Files (x86)" / "Tencent" / "WeChat",
+                    # 自定义安装路径
+                    drive / "WeChat",
+                    drive / "Tencent" / "WeChat",
                 ]
                 
                 for base_path in common_paths:

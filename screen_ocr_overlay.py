@@ -19,22 +19,23 @@ from wechat_ocr_wrapper import get_wechat_ocr
 ctk.set_appearance_mode("system")
 ctk.set_default_color_theme("blue")
 
-# 可选的 OCR 引擎依赖（动态导入）
-# PaddleOCR - 在 _get_text_positions_paddle 中导入
-# numpy - 在 _get_text_positions_paddle 中导入
 
 # 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 注意：使用自定义 StreamHandler 避免在 sys.stderr 为 None 时出错
+# 实际的日志捕获在 system_tray.py 的全局缓冲区中处理
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[]  # 不使用默认的 StreamHandler，避免写入 None
+)
 
 # 关闭第三方库的调试日志
 logging.getLogger('PIL').setLevel(logging.WARNING)
 logging.getLogger('urllib3').setLevel(logging.WARNING)
-logging.getLogger('paddleocr').setLevel(logging.WARNING)
 
 class ScreenOCRTool:
     # 默认配置常量
     DEFAULT_CONFIG = {
-        "ocr_engine": "WeChatOCR",
         "trigger_delay_ms": 300,
         "hotkey": "ALT",
         "auto_copy": True,
@@ -100,9 +101,7 @@ class ScreenOCRTool:
             self.config = self.DEFAULT_CONFIG.copy()
         
         # 初始化OCR相关属性
-        self._paddle_ocr = None
         self._wechat_ocr = None
-        self._ocr_engine: str = self.config.get("ocr_engine", self.DEFAULT_CONFIG["ocr_engine"])
         self.trigger_delay_ms: int = self.config.get("trigger_delay_ms", self.DEFAULT_CONFIG["trigger_delay_ms"])
         self.hotkey: str = self.config.get("hotkey", self.DEFAULT_CONFIG["hotkey"])
         self.pressed_keys: set = set()
@@ -169,11 +168,6 @@ class ScreenOCRTool:
         }
         
     @property
-    def paddle_ocr(self):
-        """获取PaddleOCR实例（已在启动时初始化）"""
-        return self._paddle_ocr
-
-    @property
     def wechat_ocr(self):
         """获取WeChatOCR实例（已在启动时初始化）"""
         return self._wechat_ocr
@@ -187,9 +181,6 @@ class ScreenOCRTool:
             if not isinstance(config["hotkey"], str) or not config["hotkey"]:
                 print("错误：hotkey 必须是非空字符串")
                 return False
-            if config["ocr_engine"] not in ["PaddleOCR", "WeChatOCR"]:
-                print("错误：不支持的 OCR 引擎")
-                return False
             return True
         except KeyError as e:
             print(f"错误：缺少必要的配置项 {e}")
@@ -199,8 +190,6 @@ class ScreenOCRTool:
         """初始化OCR引擎"""
         try:
             # 清理现有的OCR引擎
-            if hasattr(self, '_paddle_ocr') and self._paddle_ocr:
-                self._paddle_ocr = None
             if hasattr(self, '_wechat_ocr') and self._wechat_ocr:
                 try:
                     self._wechat_ocr.close()
@@ -208,32 +197,19 @@ class ScreenOCRTool:
                     pass
                 self._wechat_ocr = None
 
-            # 根据配置初始化OCR引擎
-            if self._ocr_engine == "PaddleOCR":
-                print("正在初始化 PaddleOCR（轻量级移动端模型）...")
-                try:
-                    from paddleocr import PaddleOCR
-                    logging.getLogger("ppocr").setLevel(logging.WARNING)
-                    self._paddle_ocr = PaddleOCR(
-                        use_textline_orientation=True,
-                        lang="ch",
-                        ocr_version='PP-OCRv4',
-                        device='cpu'
-                    )
-                    print("PaddleOCR 初始化完成")
-                except ImportError as e:
-                    logging.error(f"PaddleOCR 未安装: {e}")
-                    logging.error("请安装: pip install paddlepaddle paddleocr")
-                    self._paddle_ocr = None
-            elif self._ocr_engine == "WeChatOCR":
-                print("正在初始化 WeChatOCR...")
-                self._wechat_ocr = get_wechat_ocr()
-                if self._wechat_ocr and self._wechat_ocr.is_available():
-                    print("WeChatOCR 初始化完成")
-                else:
-                    logging.warning("WeChatOCR 不可用，请确保已安装微信客户端")
-            
-            print(f"OCR 引擎已设置为: {self._ocr_engine}")
+            # 初始化 WeChatOCR
+            print("正在初始化 WeChatOCR...")
+            self._wechat_ocr = get_wechat_ocr()
+            if self._wechat_ocr and self._wechat_ocr.is_available():
+                print("✓ WeChatOCR 初始化完成")
+            else:
+                logging.warning("❌ WeChatOCR 不可用")
+                if self._wechat_ocr and hasattr(self._wechat_ocr, 'error_message'):
+                    if self._wechat_ocr.error_message:
+                        logging.warning(f"   原因: {self._wechat_ocr.error_message}")
+                logging.info("   💡 解决方案:")
+                logging.info("   1. 安装微信客户端 (https://weixin.qq.com/)")
+                logging.info("   2. 在微信中使用一次'提取图中文字'功能以下载OCR插件")
         except Exception as e:
             print(f"初始化OCR引擎失败: {str(e)}")
 
@@ -408,104 +384,9 @@ class ScreenOCRTool:
     def get_text_positions(self, image):
         """获取文字位置信息"""
         try:
-            if self._ocr_engine == "PaddleOCR":
-                return self._get_text_positions_paddle(image)
-            elif self._ocr_engine == "WeChatOCR":
-                return self._get_text_positions_wechat(image)
-            else:
-                logging.error(f"不支持的 OCR 引擎: {self._ocr_engine}")
-                return []
+            return self._get_text_positions_wechat(image)
         except Exception as e:
             logging.error(f"OCR处理失败: {str(e)}")
-            return []
-
-    def _get_text_positions_paddle(self, image):
-        """使用PaddleOCR获取文字位置"""
-        try:
-            # 动态导入 PaddleOCR 依赖
-            try:
-                import numpy as np
-            except ImportError as e:
-                logging.error(f"PaddleOCR 依赖未安装: {e}")
-                logging.error("请安装: pip install numpy paddlepaddle paddleocr")
-                return []
-            
-            # 转换图像为numpy数组
-            if isinstance(image, Image.Image):
-                image = np.array(image)
-            
-            result = []
-            # 进行OCR识别
-            ocr_result = self.paddle_ocr.predict(image)
-            
-            if ocr_result is None:
-                return []
-            
-            # 遍历所有图像的结果（通常只有一张图）
-            for img_idx, ocr_res in enumerate(ocr_result):
-                # OCRResult对象有特定的属性来访问识别结果
-                if hasattr(ocr_res, 'boxes'):
-                    boxes = ocr_res.boxes
-                    texts = ocr_res.rec_text if hasattr(ocr_res, 'rec_text') else []
-                    scores = ocr_res.rec_score if hasattr(ocr_res, 'rec_score') else []
-                    
-                    for i, (box, text, score) in enumerate(zip(boxes, texts, scores)):
-                        
-                        # box是numpy数组，格式为 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-                        x1 = float(min(point[0] for point in box))
-                        y1 = float(min(point[1] for point in box))
-                        x2 = float(max(point[0] for point in box))
-                        y2 = float(max(point[1] for point in box))
-                    
-                    # 计算每个字符的宽度
-                    if len(text) > 0:
-                        char_width = (x2 - x1) / len(text)
-                        
-                        # 为每个字符创建单独的文本块
-                        for j, char in enumerate(text):
-                            char_x = x1 + j * char_width
-                            result.append({
-                                'text': char,
-                                'x': int(char_x),
-                                'y': int(y1),
-                                'width': int(char_width),
-                                'height': int(y2 - y1)
-                            })
-                else:
-                    # OCRResult对象是一个字典，包含所有OCR结果
-                    boxes = ocr_res.get('dt_polys') or ocr_res.get('rec_polys')
-                    texts = ocr_res.get('rec_texts')
-                    scores = ocr_res.get('rec_scores')
-                    
-                    if boxes and texts:
-                        for i, (box, text) in enumerate(zip(boxes, texts)):
-                            score = scores[i] if scores and i < len(scores) else 1.0
-                            
-                            # box是numpy数组，格式为 [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-                            x1 = float(min(point[0] for point in box))
-                            y1 = float(min(point[1] for point in box))
-                            x2 = float(max(point[0] for point in box))
-                            y2 = float(max(point[1] for point in box))
-                            
-                            # 计算每个字符的宽度
-                            if len(text) > 0:
-                                char_width = (x2 - x1) / len(text)
-                                
-                                # 为每个字符创建单独的文本块
-                                for j, char in enumerate(text):
-                                    char_x = x1 + j * char_width
-                                    result.append({
-                                        'text': char,
-                                        'x': int(char_x),
-                                        'y': int(y1),
-                                        'width': int(char_width),
-                                        'height': int(y2 - y1)
-                                    })
-            
-            return result
-            
-        except Exception as e:
-            logging.error(f"PaddleOCR处理失败: {str(e)}")
             return []
 
     def _get_text_positions_wechat(self, image):
@@ -513,7 +394,10 @@ class ScreenOCRTool:
         try:
             ocr = self.wechat_ocr
             if ocr is None or not ocr.is_available():
-                logging.error("WeChatOCR 不可用")
+                logging.error("❌ WeChatOCR 不可用，无法进行识别")
+                if ocr and hasattr(ocr, 'error_message') and ocr.error_message:
+                    logging.error(f"   原因: {ocr.error_message}")
+                logging.info("   💡 请安装微信客户端并使用一次OCR功能")
                 return []
             
             # WeChatOCR 直接接受 PIL Image，可选预处理
@@ -1003,21 +887,19 @@ class ScreenOCRTool:
                 self.cleanup()
                 self.root.quit()
             
-            # 设置窗口关闭协议和键盘中断处理
+            # 设置窗口关闭协议
             self.root.protocol("WM_DELETE_WINDOW", on_closing)
             
-            def handle_interrupt(event=None):
-                on_closing()
-            
-            # 绑定 Ctrl+C 事件
-            self.root.bind_all('<Control-c>', handle_interrupt)
-            
             # 使用Tkinter的主循环
+            # 注意：不绑定 GUI 中的 Ctrl+C，让它在 GUI 中保持默认行为（复制等）
+            # 控制台中的 Ctrl+C 会触发 KeyboardInterrupt，在下面捕获
             while self._running:
                 try:
                     self.root.update()
                     time.sleep(0.01)
                 except KeyboardInterrupt:
+                    # 控制台中的 Ctrl+C 会触发这里
+                    print("\n收到中断信号 (Ctrl+C)，正在退出...")
                     on_closing()
                     break
                 except Exception as e:
@@ -1035,7 +917,6 @@ class ScreenOCRTool:
         """重新加载配置"""
         try:
             if hasattr(self, 'tray'):
-                old_engine = self._ocr_engine
                 self.config = self.tray.config
                 
                 # 更新触发延时
@@ -1043,12 +924,6 @@ class ScreenOCRTool:
                 
                 # 更新快捷键配置
                 self.hotkey = self.config.get('hotkey', 'alt')
-                
-                # 如果OCR引擎为None或发生变化，进行初始化
-                new_engine = self.config.get('ocr_engine', self.DEFAULT_CONFIG["ocr_engine"])
-                if self._ocr_engine != new_engine:
-                    self._ocr_engine = new_engine
-                    self.init_ocr_engine()
         except Exception as e:
             logging.error(f"重新加载配置失败: {str(e)}")
     

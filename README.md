@@ -42,9 +42,8 @@
 # 1. 安装核心依赖
 pip install -r requirements.txt
 
-# 2. 下载 WeChatOCR 引擎（推荐）
-# 从 https://github.com/swigger/wechat-ocr 下载 wcocr.pyd
-# 放在项目根目录
+# 2. 确保已安装微信客户端
+# 程序会自动检测并使用微信的 OCR 插件
 
 # 3. 运行程序
 python screen_ocr_overlay.py
@@ -65,37 +64,24 @@ build_simple.bat
 
 **详细说明:** 查看 [BUILD.md](BUILD.md)
 
-### 可选 OCR 引擎 / Optional OCR Engines
-
-```bash
-# 安装 PaddleOCR（离线、高准确度）
-pip install paddlepaddle paddleocr numpy
-```
-
-**详细说明:** 查看 [INSTALL_OCR_ENGINES.md](INSTALL_OCR_ENGINES.md)
 
 ## 技术特点 / Technical Features
 
-### OCR引擎 / OCR Engines
-- 默认引擎：WeChatOCR（快速、准确）/ Default: WeChatOCR (fast, accurate)
-- 可选引擎：PaddleOCR / Optional: PaddleOCR
+### OCR引擎 / OCR Engine
+- 使用 WeChatOCR 引擎（快速、准确）/ Uses WeChatOCR engine (fast, accurate)
 
 ### 依赖项 / Dependencies
 
-**核心依赖（必需）/ Core Dependencies (Required):**
+**核心依赖 / Core Dependencies:**
 - Python 3.8+
 - pywin32 (Windows API)
 - Pillow (图像处理 / Image processing)
 - pystray (系统托盘 / System tray)
 - tkinter (标准库 / Standard library)
 
-**OCR 引擎（选装）/ OCR Engines (Optional):**
-- wcocr.pyd - WeChatOCR 引擎（推荐 / Recommended）
-- paddlepaddle + paddleocr - PaddleOCR（离线 / Offline）
-
 ### 系统要求 / System Requirements
-- 操作系统：Windows 10/11 / OS: Windows 10/11
-- 微信客户端（使用 WeChatOCR 时）/ WeChat client (for WeChatOCR)
+- 操作系统 / OS: Windows 10/11
+- 微信客户端 / WeChat client (必需 / required)
 
 ## 性能优化 / Performance Optimization
 - 最小化CPU使用 / Minimal CPU usage

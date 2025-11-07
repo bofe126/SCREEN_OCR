@@ -192,7 +192,7 @@ class WelcomePage:
         
         # 窗口尺寸
         window_width = 500
-        window_height = 550
+        window_height = 620
         
         # 居中显示
         screen_width = self.root.winfo_screenwidth()

@@ -612,13 +612,11 @@ class ScreenOCRTool:
             self.overlay_window.grid_rowconfigure(0, weight=1)
             self.overlay_window.grid_columnconfigure(0, weight=1)
             
-            # 创建画布 - 根据是否有文本块决定边框颜色
+            # 创建画布
             canvas = tk.Canvas(
                 self.overlay_window,
-                highlightthickness=4,  # 将边框宽度从2增加到4
-                highlightbackground="#3498db" if not text_blocks else "#00FF00",  # 等待时蓝色，完成时绿色
-                highlightcolor="#3498db" if not text_blocks else "#00FF00",  # 保持一致的颜色
-                bg='white',
+                highlightthickness=0,
+                bg='black',
                 width=screen_width,
                 height=screen_height,
                 cursor='wait' if not text_blocks else 'arrow'
@@ -638,7 +636,7 @@ class ScreenOCRTool:
                     
                     photo = ImageTk.PhotoImage(masked_img)
                     canvas.photo = photo
-                    canvas.create_image(0, 0, image=photo, anchor='nw')
+                    canvas.create_image(0, 0, image=photo, anchor='nw', tags='screenshot')
                     
                     # 计算屏幕中心位置
                     center_x = screen_width / 2
@@ -662,7 +660,25 @@ class ScreenOCRTool:
                     
                     photo = ImageTk.PhotoImage(masked_img)
                     canvas.photo = photo
-                    canvas.create_image(0, 0, image=photo, anchor='nw')
+                    canvas.create_image(0, 0, image=photo, anchor='nw', tags='screenshot')
+            
+            # 绘制边框（在截图之上） - 根据是否有文本块决定边框颜色
+            border_color = "#3498db" if not text_blocks else "#00FF00"  # 等待时蓝色，完成时绿色
+            border_width = 6  # 边框宽度
+            
+            # 绘制四条边框线（在最上层）
+            # 上边框
+            canvas.create_rectangle(0, 0, screen_width, border_width, 
+                                   fill=border_color, outline='', tags='border')
+            # 下边框
+            canvas.create_rectangle(0, screen_height - border_width, screen_width, screen_height, 
+                                   fill=border_color, outline='', tags='border')
+            # 左边框
+            canvas.create_rectangle(0, 0, border_width, screen_height, 
+                                   fill=border_color, outline='', tags='border')
+            # 右边框
+            canvas.create_rectangle(screen_width - border_width, 0, screen_width, screen_height, 
+                                   fill=border_color, outline='', tags='border')
             
             # 显示窗口
             self.overlay_window.deiconify()

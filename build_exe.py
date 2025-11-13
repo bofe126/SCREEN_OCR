@@ -99,6 +99,7 @@ def build_exe():
         f'--icon={os.path.abspath("icon.ico")}' if has_icon else '',
         
         # 添加数据文件
+        '--add-data=icon.ico;.' if has_icon else '',
         '--add-data=icon.svg;.',
         '--add-data=wcocr.pyd;.' if os.path.exists('wcocr.pyd') else '',
         

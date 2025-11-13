@@ -13,6 +13,7 @@ import queue
 import threading
 import sys
 from wechat_ocr_wrapper import get_wechat_ocr
+from windows_ocr_wrapper import WindowsOCRWrapper
 from splash_screen import SplashScreen, WelcomePage, StartupToast
 
 # 设置 CustomTkinter 外观
@@ -114,6 +115,7 @@ class ScreenOCRTool:
         
         # 初始化OCR相关属性
         self._wechat_ocr = None
+        self._windows_ocr = None
         self.trigger_delay_ms: int = self.config.get("trigger_delay_ms", self.DEFAULT_CONFIG["trigger_delay_ms"])
         self.hotkey: str = self.config.get("hotkey", self.DEFAULT_CONFIG["hotkey"])
         self.pressed_keys: set = set()
@@ -210,6 +212,9 @@ class ScreenOCRTool:
                     pass
                 self._wechat_ocr = None
 
+            if hasattr(self, '_windows_ocr') and self._windows_ocr:
+                self._windows_ocr = None
+
             # 初始化 WeChatOCR
             print("正在初始化 WeChatOCR...")
             self._wechat_ocr = get_wechat_ocr()
@@ -223,6 +228,17 @@ class ScreenOCRTool:
                 logging.info("   💡 解决方案:")
                 logging.info("   1. 安装微信客户端 (https://weixin.qq.com/)")
                 logging.info("   2. 在微信中使用一次'提取图中文字'功能以下载OCR插件")
+            
+            # 初始化 Windows OCR
+            print("正在初始化 Windows OCR...")
+            self._windows_ocr = WindowsOCRWrapper()
+            if self._windows_ocr and self._windows_ocr.is_available():
+                print("✓ Windows OCR 初始化完成")
+            else:
+                logging.warning("❌ Windows OCR 不可用")
+                if self._windows_ocr and hasattr(self._windows_ocr, 'error_message'):
+                    if self._windows_ocr.error_message:
+                        logging.warning(f"   原因: {self._windows_ocr.error_message}")
         except Exception as e:
             print(f"初始化OCR引擎失败: {str(e)}")
 
@@ -397,7 +413,13 @@ class ScreenOCRTool:
     def get_text_positions(self, image):
         """获取文字位置信息"""
         try:
-            return self._get_text_positions_wechat(image)
+            # 根据配置选择 OCR 引擎
+            ocr_engine = self.config.get("ocr_engine", "wechat")
+            
+            if ocr_engine == "windows":
+                return self._get_text_positions_windows(image)
+            else:
+                return self._get_text_positions_wechat(image)
         except Exception as e:
             logging.error(f"OCR处理失败: {str(e)}")
             return []
@@ -405,7 +427,7 @@ class ScreenOCRTool:
     def _get_text_positions_wechat(self, image):
         """使用WeChatOCR获取文字位置"""
         try:
-            ocr = self.wechat_ocr
+            ocr = self._wechat_ocr
             if ocr is None or not ocr.is_available():
                 logging.error("❌ WeChatOCR 不可用，无法进行识别")
                 if ocr and hasattr(ocr, 'error_message') and ocr.error_message:
@@ -420,6 +442,26 @@ class ScreenOCRTool:
             
         except Exception as e:
             logging.error(f"WeChatOCR处理失败: {str(e)}")
+            return []
+    
+    def _get_text_positions_windows(self, image):
+        """使用Windows OCR获取文字位置"""
+        try:
+            ocr = self._windows_ocr
+            if ocr is None or not ocr.is_available():
+                logging.error("❌ Windows OCR 不可用，无法进行识别")
+                if ocr and hasattr(ocr, 'error_message') and ocr.error_message:
+                    logging.error(f"   原因: {ocr.error_message}")
+                logging.info("   💡 请安装: pip install winrt-Windows.Media.Ocr")
+                return []
+            
+            # Windows OCR 直接接受 PIL Image，可选预处理
+            preprocess = self.config.get("image_preprocess", False)
+            result = ocr.ocr_pil_image(image, preprocess=preprocess)
+            return result
+            
+        except Exception as e:
+            logging.error(f"Windows OCR处理失败: {str(e)}")
             return []
 
     def should_add_space(self, prev_block, next_block, min_gap=10):

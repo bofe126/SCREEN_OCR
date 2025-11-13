@@ -145,6 +145,7 @@ class ConfigDialog:
             "auto_copy": True,
             "show_debug": False,
             "image_preprocess": False,
+            "ocr_engine": "wechat",
             "debug_log": ""
         }
         
@@ -261,6 +262,42 @@ class ConfigDialog:
         self.hotkey_button.pack(side=tk.LEFT)
         
         self.recording_hotkey = False
+        
+        # 分隔线
+        ttk.Separator(content_frame, orient='horizontal').pack(fill=tk.X, pady=10)
+        
+        # OCR 引擎选择
+        ocr_label = ttk.Label(
+            content_frame,
+            text="OCR 引擎",
+            font=("Microsoft YaHei UI", 11, "bold")
+        )
+        ocr_label.pack(anchor="w", pady=(0, 4))
+        
+        ocr_frame = ttk.Frame(content_frame)
+        ocr_frame.pack(fill=tk.X, pady=(0, 12))
+        
+        self.ocr_engine_var = tk.StringVar(value=self.config.get("ocr_engine", self.default_config["ocr_engine"]))
+        
+        wechat_rb = ttk_boot.Radiobutton(
+            ocr_frame,
+            text="微信 OCR (需确保已安装微信)",
+            variable=self.ocr_engine_var,
+            value="wechat",
+            bootstyle="primary",
+            command=self.update_config
+        )
+        wechat_rb.pack(anchor="w", pady=(0, 4))
+        
+        windows_rb = ttk_boot.Radiobutton(
+            ocr_frame,
+            text="Windows OCR (系统自带，推荐)",
+            variable=self.ocr_engine_var,
+            value="windows",
+            bootstyle="primary",
+            command=self.update_config
+        )
+        windows_rb.pack(anchor="w")
         
         # 分隔线
         ttk.Separator(content_frame, orient='horizontal').pack(fill=tk.X, pady=10)
@@ -475,6 +512,7 @@ class ConfigDialog:
             "auto_copy": self.auto_copy_var.get(),
             "image_preprocess": self.image_preprocess_var.get(),
             "show_debug": self.show_debug_var.get(),
+            "ocr_engine": self.ocr_engine_var.get(),
         })
         self.callback(self.config)
     

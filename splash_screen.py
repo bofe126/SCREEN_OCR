@@ -1,11 +1,16 @@
 """
-启动画面和欢迎页面模块
+启动画面和欢迎页面模块（使用 ttkbootstrap）
 提供首次启动引导和启动进度显示
 """
+import os
+import sys
 import tkinter as tk
-import customtkinter as ctk
+from tkinter import ttk
+import ttkbootstrap as ttk_boot
+from ttkbootstrap.constants import *
 import threading
 import time
+from PIL import Image, ImageTk
 
 
 class SplashScreen:
@@ -42,6 +47,14 @@ class SplashScreen:
         self.root.overrideredirect(True)  # 无边框
         self.root.attributes('-topmost', True)  # 置顶
         
+        # 设置图标
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+        except:
+            pass
+        
         # 窗口尺寸
         window_width = 350
         window_height = 180
@@ -54,7 +67,6 @@ class SplashScreen:
         
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         
-        # 使用标准 tkinter 组件（避免 CustomTkinter 依赖问题）
         # 背景框架
         bg_frame = tk.Frame(self.root, bg="#2b2b2b", relief="flat")
         bg_frame.pack(fill="both", expand=True, padx=2, pady=2)
@@ -83,33 +95,14 @@ class SplashScreen:
         )
         self.status_label.pack(pady=(0, 15))
         
-        # 进度条容器
-        progress_container = tk.Frame(main_frame, bg="#2b2b2b")
-        progress_container.pack(pady=(0, 20))
-        
-        # 简单的进度条（使用 Canvas）
-        self.progress_canvas = tk.Canvas(
-            progress_container,
-            width=280,
-            height=8,
-            bg="#404040",
-            highlightthickness=0
+        # 进度条
+        self.progress_bar = ttk_boot.Progressbar(
+            main_frame,
+            mode='determinate',
+            length=280,
+            bootstyle="info"
         )
-        self.progress_canvas.pack()
-        
-        # 进度条背景
-        self.progress_bg = self.progress_canvas.create_rectangle(
-            0, 0, 280, 8,
-            fill="#404040",
-            outline=""
-        )
-        
-        # 进度条前景
-        self.progress_fg = self.progress_canvas.create_rectangle(
-            0, 0, 0, 8,
-            fill="#1f538d",
-            outline=""
-        )
+        self.progress_bar.pack(pady=(0, 20))
         
         # 版本信息
         version_label = tk.Label(
@@ -139,9 +132,8 @@ class SplashScreen:
             self.progress_value = value
             
             # 更新进度条
-            if hasattr(self, 'progress_canvas') and hasattr(self, 'progress_fg'):
-                width = int(280 * value)
-                self.progress_canvas.coords(self.progress_fg, 0, 0, width, 8)
+            if self.progress_bar:
+                self.progress_bar['value'] = value * 100
             
             # 更新状态文本
             if status_text and self.status_label:
@@ -186,13 +178,22 @@ class WelcomePage:
     def show(self):
         """显示欢迎页面"""
         # 创建窗口
-        self.root = ctk.CTkToplevel()
+        self.root = tk.Toplevel()
         self.root.withdraw()
         self.root.title("欢迎使用 Screen OCR")
         
-        # 窗口尺寸
-        window_width = 500
-        window_height = 620
+        # 设置图标
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+            if os.path.exists(icon_path):
+                self.root.iconbitmap(icon_path)
+                print("[欢迎页] 图标设置成功")
+        except Exception as e:
+            print(f"[欢迎页] 设置图标失败: {e}")
+        
+        # 窗口尺寸（极致紧凑）
+        window_width = 400
+        window_height = 410
         
         # 居中显示
         screen_width = self.root.winfo_screenwidth()
@@ -203,137 +204,139 @@ class WelcomePage:
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
         self.root.resizable(False, False)
         
-        # 主容器
-        main_frame = ctk.CTkFrame(self.root, fg_color="transparent")
-        main_frame.pack(fill="both", expand=True, padx=30, pady=25)
+        # 键盘快捷键
+        self.root.bind('<Return>', lambda e: self.on_start())
+        self.root.bind('<Escape>', lambda e: self.on_start())
+        
+        # 主容器（极小 padding，底部最小）
+        main_frame = ttk.Frame(self.root, padding=(15, 10, 15, 3))
+        main_frame.pack(fill=tk.BOTH, expand=True)
+        
+        # 应用图标
+        try:
+            icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
+            if os.path.exists(icon_path):
+                icon_img = Image.open(icon_path)
+                icon_img = icon_img.resize((40, 40), Image.Resampling.LANCZOS)
+                photo = ImageTk.PhotoImage(icon_img)
+                
+                icon_label = ttk.Label(main_frame, image=photo)
+                icon_label.image = photo  # 保持引用
+                icon_label.pack(pady=(0, 4))
+        except Exception as e:
+            print(f"[欢迎页] 加载图标图片失败: {e}")
         
         # 标题
-        title_label = ctk.CTkLabel(
+        title_label = ttk.Label(
             main_frame,
             text="欢迎使用 Screen OCR",
-            font=("Segoe UI", 24, "bold"),
-            text_color="#1f538d"
+            font=("Microsoft YaHei UI", 15, "bold"),
+            foreground="#1f538d"
         )
-        title_label.pack(pady=(0, 10))
+        title_label.pack(pady=(0, 2))
         
         # 副标题
-        subtitle_label = ctk.CTkLabel(
+        subtitle_label = ttk.Label(
             main_frame,
             text="快速识别屏幕上的文字",
-            font=("Segoe UI", 12),
-            text_color="gray"
+            font=("Microsoft YaHei UI", 9),
+            foreground="#666666"
         )
-        subtitle_label.pack(pady=(0, 25))
+        subtitle_label.pack(pady=(0, 8))
         
         # 分隔线
-        separator = ctk.CTkFrame(main_frame, height=2, fg_color="gray70")
-        separator.pack(fill="x", pady=(0, 20))
+        ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=(12, 10))
         
         # 快速开始标题
-        quick_start_label = ctk.CTkLabel(
+        quick_start_label = ttk.Label(
             main_frame,
             text="快速开始",
-            font=("Segoe UI", 16, "bold"),
-            text_color="#1f538d"
+            font=("Microsoft YaHei UI", 11, "bold"),
+            foreground="#1f538d"
         )
-        quick_start_label.pack(anchor="w", pady=(0, 15))
+        quick_start_label.pack(anchor="w", pady=(0, 5))
         
-        # 使用步骤
+        # 获取实际快捷键
+        actual_hotkey = self.config.get("hotkey", "ALT").upper()
+        
+        # 精简步骤 - 合并为 3 步
         steps = [
-            ("1️⃣", "按住 ALT 键", "触发OCR识别功能"),
-            ("2️⃣", "等待蓝色边框出现", "表示正在识别文字"),
-            ("3️⃣", "拖动鼠标选择文字", "选中需要的文本内容"),
-            ("4️⃣", "自动复制到剪贴板", "松开快捷键即可使用")
+            ("1️⃣", f"按住 {actual_hotkey} 键不放，开始识别，等待蓝色边框变绿"),
+            ("2️⃣", "识别完成后，拖动鼠标选择需要的文字"),
+            ("3️⃣", "文字自动复制到剪贴板，松开快捷键退出")
         ]
         
-        for emoji, title, desc in steps:
-            step_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-            step_frame.pack(fill="x", pady=5)
+        for emoji, text in steps:
+            step_frame = ttk.Frame(main_frame)
+            step_frame.pack(fill=tk.X, pady=1)
             
             # 步骤编号
-            emoji_label = ctk.CTkLabel(
+            emoji_label = ttk.Label(
                 step_frame,
                 text=emoji,
-                font=("Segoe UI", 16),
-                width=40
+                font=("Segoe UI", 10),
+                width=3
             )
-            emoji_label.pack(side="left", padx=(0, 10))
+            emoji_label.pack(side=tk.LEFT, padx=(0, 4))
             
-            # 步骤内容
-            content_frame = ctk.CTkFrame(step_frame, fg_color="transparent")
-            content_frame.pack(side="left", fill="x", expand=True)
-            
-            title_label = ctk.CTkLabel(
-                content_frame,
-                text=title,
-                font=("Segoe UI", 13, "bold"),
-                anchor="w"
+            # 步骤文字（单行）
+            text_label = ttk.Label(
+                step_frame,
+                text=text,
+                font=("Microsoft YaHei UI", 9),
+                wraplength=320
             )
-            title_label.pack(anchor="w")
-            
-            desc_label = ctk.CTkLabel(
-                content_frame,
-                text=desc,
-                font=("Segoe UI", 11),
-                text_color="gray",
-                anchor="w"
-            )
-            desc_label.pack(anchor="w")
-        
-        # 提示信息
-        tip_frame = ctk.CTkFrame(main_frame, fg_color="#e3f2fd", corner_radius=8)
-        tip_frame.pack(fill="x", pady=(20, 0))
-        
-        tip_label = ctk.CTkLabel(
-            tip_frame,
-            text="💡 提示：程序已最小化到系统托盘，点击托盘图标可打开设置",
-            font=("Segoe UI", 11),
-            text_color="#1976d2",
-            wraplength=420
-        )
-        tip_label.pack(padx=15, pady=12)
+            text_label.pack(side=tk.LEFT, anchor="w", fill=tk.X, expand=True)
         
         # 分隔线
-        separator2 = ctk.CTkFrame(main_frame, height=2, fg_color="gray70")
-        separator2.pack(fill="x", pady=(20, 15))
+        ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=(12, 10))
         
-        # "不再显示"复选框
+        # "不再显示"复选框（使用 ttkbootstrap 样式）
         self.dont_show_var = tk.BooleanVar(value=False)
-        dont_show_cb = ctk.CTkCheckBox(
+        dont_show_cb = ttk_boot.Checkbutton(
             main_frame,
             text="不再显示此欢迎页面",
             variable=self.dont_show_var,
-            font=("Segoe UI", 12)
+            bootstyle="round-toggle"
         )
-        dont_show_cb.pack(anchor="w", pady=(0, 15))
+        dont_show_cb.pack(anchor="w", pady=(0, 5))
         
         # 按钮容器
-        button_frame = ctk.CTkFrame(main_frame, fg_color="transparent")
-        button_frame.pack(fill="x", pady=(0, 0))
+        button_frame = ttk.Frame(main_frame)
+        button_frame.pack(fill=tk.X, pady=(0, 4))
         
-        # 开始使用按钮
-        start_button = ctk.CTkButton(
+        # 开始使用按钮（带快捷键提示）
+        start_button = ttk_boot.Button(
             button_frame,
-            text="开始使用",
-            font=("Segoe UI", 13, "bold"),
-            width=150,
-            height=40,
+            text="开始使用 (Enter)",
+            bootstyle="primary",
+            width=18,
             command=self.on_start
         )
-        start_button.pack(side="left", padx=(0, 10))
+        start_button.pack(side=tk.LEFT, padx=(0, 10))
+        start_button.focus_set()  # 默认焦点
         
         # 详细设置按钮
-        settings_button = ctk.CTkButton(
+        settings_button = ttk_boot.Button(
             button_frame,
             text="详细设置",
-            font=("Segoe UI", 13),
-            width=150,
-            height=40,
-            fg_color="gray60",
-            hover_color="gray50",
+            bootstyle="secondary-outline",
+            width=15,
             command=self.on_settings
         )
-        settings_button.pack(side="left")
+        settings_button.pack(side=tk.LEFT)
+        
+        # 分隔线
+        ttk.Separator(main_frame, orient='horizontal').pack(fill=tk.X, pady=(12, 10))
+        
+        # 提示文字（按钮下方，靠左显示）
+        tip_label = ttk.Label(
+            main_frame,
+            text="💡 程序已在系统托盘运行，点击图标打开设置",
+            font=("Microsoft YaHei UI", 9),
+            foreground="#999999"
+        )
+        tip_label.pack(anchor="w", pady=(0, 0))
         
         # 设置窗口关闭处理
         self.root.protocol("WM_DELETE_WINDOW", self.on_start)
@@ -414,7 +417,7 @@ class StartupToast:
         title_label = tk.Label(
             frame,
             text="📋 Screen OCR 已启动",
-            font=("Segoe UI", 12, "bold"),
+            font=("Microsoft YaHei UI", 12, "bold"),
             bg="#2b2b2b",
             fg="#ffffff"
         )
@@ -424,7 +427,7 @@ class StartupToast:
         tip_label = tk.Label(
             frame,
             text=f"按 {self.hotkey} 键开始识别文字",
-            font=("Segoe UI", 10),
+            font=("Microsoft YaHei UI", 10),
             bg="#2b2b2b",
             fg="#b0b0b0"
         )
@@ -484,13 +487,3 @@ if __name__ == "__main__":
     # 等待窗口关闭
     if welcome.root:
         welcome.root.mainloop()
-    
-    time.sleep(1)
-    
-    # 测试Toast通知
-    print("测试Toast通知...")
-    toast = StartupToast(hotkey="ALT")
-    toast.show(duration_ms=3000)
-    
-    time.sleep(4)
-    print("测试完成")

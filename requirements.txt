@@ -2,7 +2,7 @@
 pywin32>=306
 Pillow>=10.0.0
 pystray>=0.19.5
-customtkinter>=5.2.0
+ttkbootstrap>=1.18.0
 
 # 打包工具
 pyinstaller>=5.0.0

@@ -6,7 +6,6 @@ import ctypes
 from ctypes import wintypes
 from PIL import Image, ImageTk, ImageDraw
 import tkinter as tk
-import customtkinter as ctk
 import logging
 import traceback
 import time
@@ -17,8 +16,6 @@ from wechat_ocr_wrapper import get_wechat_ocr
 from splash_screen import SplashScreen, WelcomePage, StartupToast
 
 # 设置 CustomTkinter 外观
-ctk.set_appearance_mode("system")
-ctk.set_default_color_theme("blue")
 
 
 # 配置日志

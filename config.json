@@ -2,9 +2,10 @@
     "trigger_delay_ms": 350,
     "hotkey": "ALT",
     "auto_copy": true,
-    "show_debug": false,
-    "image_preprocess": false,
+    "show_debug": true,
+    "image_preprocess": true,
     "first_run": true,
     "show_welcome": true,
-    "show_startup_notification": true
+    "show_startup_notification": true,
+    "ocr_engine": "windows"
 }

@@ -184,24 +184,23 @@ class WelcomePage:
         
         # 设置图标
         try:
-            icon_path = os.path.join(os.path.dirname(__file__), "icon.ico")
-            if os.path.exists(icon_path):
-                self.root.iconbitmap(icon_path)
-                print("[欢迎页] 图标设置成功")
+            # 尝试多个可能的图标路径
+            icon_paths = [
+                os.path.join(os.path.dirname(__file__), "icon.ico"),
+                os.path.join(os.path.dirname(os.path.abspath(__file__)), "icon.ico"),
+                os.path.join(sys.path[0], "icon.ico"),
+                "icon.ico"
+            ]
+            
+            for icon_path in icon_paths:
+                if os.path.exists(icon_path):
+                    self.root.iconbitmap(icon_path)
+                    print(f"[欢迎页] 图标设置成功: {icon_path}")
+                    break
         except Exception as e:
             print(f"[欢迎页] 设置图标失败: {e}")
         
-        # 窗口尺寸（极致紧凑）
-        window_width = 400
-        window_height = 410
-        
-        # 居中显示
-        screen_width = self.root.winfo_screenwidth()
-        screen_height = self.root.winfo_screenheight()
-        x = (screen_width - window_width) // 2
-        y = (screen_height - window_height) // 2
-        
-        self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
+        # 窗口大小自适应
         self.root.resizable(False, False)
         
         # 键盘快捷键
@@ -279,12 +278,11 @@ class WelcomePage:
             )
             emoji_label.pack(side=tk.LEFT, padx=(0, 4))
             
-            # 步骤文字（单行）
+            # 步骤文字（自适应宽度）
             text_label = ttk.Label(
                 step_frame,
                 text=text,
-                font=("Microsoft YaHei UI", 9),
-                wraplength=320
+                font=("Microsoft YaHei UI", 9)
             )
             text_label.pack(side=tk.LEFT, anchor="w", fill=tk.X, expand=True)
         
@@ -341,6 +339,22 @@ class WelcomePage:
         # 设置窗口关闭处理
         self.root.protocol("WM_DELETE_WINDOW", self.on_start)
         
+        # 更新窗口以获取实际内容大小
+        self.root.update_idletasks()
+        
+        # 获取内容实际需要的宽度和高度
+        required_width = main_frame.winfo_reqwidth() + 10
+        required_height = main_frame.winfo_reqheight() + 10
+        
+        # 居中显示
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        x = (screen_width - required_width) // 2
+        y = (screen_height - required_height) // 2
+        
+        # 设置最终位置和大小
+        self.root.geometry(f"{required_width}x{required_height}+{x}+{y}")
+        
         # 显示窗口
         self.root.deiconify()
         self.root.lift()
@@ -352,9 +366,13 @@ class WelcomePage:
         if self.dont_show_var and self.dont_show_var.get():
             self.config["show_welcome"] = False
         
+        # 清理变量
+        self.dont_show_var = None
+        
         # 关闭窗口
         if self.root:
             self.root.destroy()
+            self.root = None
         
         # 调用回调
         if self.on_close_callback:
@@ -366,9 +384,13 @@ class WelcomePage:
         if self.dont_show_var and self.dont_show_var.get():
             self.config["show_welcome"] = False
         
+        # 清理变量
+        self.dont_show_var = None
+        
         # 关闭窗口
         if self.root:
             self.root.destroy()
+            self.root = None
         
         # 调用回调并打开设置
         if self.on_close_callback:

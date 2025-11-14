@@ -3,6 +3,12 @@ pywin32>=306
 Pillow>=10.0.0
 pystray>=0.19.5
 ttkbootstrap>=1.18.0
+winrt-Windows.Media.Ocr>=3.2.1
+winrt-Windows.Graphics.Imaging>=3.2.1
+winrt-Windows.Globalization>=3.2.1
+winrt-Windows.Storage>=3.2.1
+winrt-Windows.Storage.Streams>=3.2.1
+winrt-runtime>=3.2.1
 
 # 打包工具
 pyinstaller>=5.0.0

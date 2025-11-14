@@ -31,13 +31,17 @@ def convert_svg_to_ico():
         with open('icon.svg', 'rb') as f:
             svg_data = f.read()
         
-        # 转换为多个尺寸的 ICO
-        sizes = [16, 32, 48, 64, 128, 256]
+        # 转换为多个尺寸的 ICO（包含高DPI尺寸）
+        sizes = [16, 20, 24, 32, 40, 48, 64, 96, 128, 256]
         images = []
         
         for size in sizes:
-            png_data = svg2png(bytestring=svg_data, output_width=size, output_height=size)
+            # 使用更高的渲染分辨率以提高质量
+            render_size = size * 2
+            png_data = svg2png(bytestring=svg_data, output_width=render_size, output_height=render_size)
             img = Image.open(BytesIO(png_data))
+            # 使用高质量重采样缩小到目标尺寸
+            img = img.resize((size, size), Image.Resampling.LANCZOS)
             images.append(img)
         
         # 保存为 ICO
@@ -107,6 +111,16 @@ def build_exe():
         '--hidden-import=PIL',
         '--hidden-import=PIL._tkinter_finder',
         '--hidden-import=pystray._win32',
+        '--hidden-import=ttkbootstrap',
+        '--hidden-import=ttkbootstrap.constants',
+        '--hidden-import=ttkbootstrap.themes',
+        '--hidden-import=ttkbootstrap.style',
+        '--hidden-import=winrt',
+        '--hidden-import=winrt.windows.media.ocr',
+        '--hidden-import=winrt.windows.globalization',
+        '--hidden-import=winrt.windows.graphics.imaging',
+        '--hidden-import=winrt.windows.storage',
+        '--hidden-import=winrt.windows.storage.streams',
         
         # 排除不需要的模块（减小体积）
         '--exclude-module=paddleocr',

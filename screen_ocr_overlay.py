@@ -57,6 +57,7 @@ class ScreenOCRTool:
         
         # 添加配置队列和状态标志
         self.config_queue: queue.Queue = queue.Queue()
+        self.ocr_result_queue: queue.Queue = queue.Queue()  # OCR结果队列
         self.enabled: bool = True  # 默认启用服务
         
         # 初始化主窗口
@@ -853,6 +854,7 @@ class ScreenOCRTool:
             
             self.current_screenshot = self.capture_screen_region(width, height)
             if not self.current_screenshot:
+                self.is_processing = False
                 return
             
             # 创建新窗口并显示等待光标
@@ -865,25 +867,26 @@ class ScreenOCRTool:
                         widget.configure(cursor='wait')
                 self.overlay_window.update_idletasks()
             
-            text_blocks = self.get_text_positions(self.current_screenshot)
+            # 在后台线程中执行OCR识别，避免阻塞UI
+            def ocr_worker():
+                try:
+                    text_blocks = self.get_text_positions(self.current_screenshot)
+                    # 将结果放入队列，由主循环处理
+                    self.ocr_result_queue.put(('success', text_blocks))
+                except Exception as e:
+                    logging.error(f"OCR识别失败: {str(e)}")
+                    import traceback
+                    traceback.print_exc()
+                    # 将错误放入队列
+                    self.ocr_result_queue.put(('error', None))
             
-            # OCR识别完成后显示结果
-            if text_blocks:
-                # 销毁当前的等待窗口
-                if hasattr(self, 'overlay_window') and self.overlay_window:
-                    self.overlay_window.destroy()
-                    self.overlay_window = None
-                # 创建新的结果显示窗口
-                self.show_overlay_text(text_blocks)
-            else:
-                # 即使没有识别到文本，也更新覆盖层状态
-                if hasattr(self, 'overlay_window') and self.overlay_window:
-                    for widget in self.overlay_window.winfo_children():
-                        if isinstance(widget, tk.Canvas):
-                            widget.configure(cursor='arrow')
+            # 启动后台线程执行OCR
+            ocr_thread = threading.Thread(target=ocr_worker, daemon=True)
+            ocr_thread.start()
         
         except Exception as e:
             logging.error(f"处理失败: {str(e)}")
+            self.is_processing = False
 
 
     def cleanup_windows(self):
@@ -923,6 +926,31 @@ class ScreenOCRTool:
                         task = self.config_queue.get_nowait()
                         if callable(task):
                             task()
+                    
+                    # 检查OCR结果队列
+                    while not self.ocr_result_queue.empty():
+                        status, text_blocks = self.ocr_result_queue.get_nowait()
+                        if status == 'success':
+                            try:
+                                # OCR识别完成后显示结果
+                                if text_blocks:
+                                    # 销毁当前的等待窗口
+                                    if hasattr(self, 'overlay_window') and self.overlay_window:
+                                        self.overlay_window.destroy()
+                                        self.overlay_window = None
+                                    # 创建新的结果显示窗口
+                                    self.show_overlay_text(text_blocks)
+                                else:
+                                    # 即使没有识别到文本，也更新覆盖层状态
+                                    if hasattr(self, 'overlay_window') and self.overlay_window:
+                                        for widget in self.overlay_window.winfo_children():
+                                            if isinstance(widget, tk.Canvas):
+                                                widget.configure(cursor='arrow')
+                            except Exception as e:
+                                logging.error(f"更新UI失败: {str(e)}")
+                        elif status == 'error':
+                            # 重置处理状态
+                            self.is_processing = False
                     
                     # 检查是否需要清理窗口
                     if self.cleanup_pending:

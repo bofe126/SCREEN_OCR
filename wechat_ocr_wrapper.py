@@ -506,18 +506,15 @@ class WeChatOCRWrapper:
                         width = item.get('width', 0) or item.get('w', 0)
                         height = item.get('height', 0) or item.get('h', 0)
                     
-                    # 将整行文本按字符拆分
+                    # 保持单词/词组级别，不再拆分成单字符
                     if len(text) > 0 and width > 0 and height > 0:
-                        char_width = width / len(text)
-                        for i, char in enumerate(text):
-                            char_x = x + i * char_width
-                            parsed_results.append({
-                                'text': char,
-                                'x': int(char_x),
-                                'y': int(y),
-                                'width': int(char_width),
-                                'height': int(height)
-                            })
+                        parsed_results.append({
+                            'text': text,
+                            'x': int(x),
+                            'y': int(y),
+                            'width': int(width),
+                            'height': int(height)
+                        })
                     else:
                         skipped_count += 1
                     

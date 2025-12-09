@@ -146,7 +146,13 @@ class ConfigDialog:
             "show_debug": False,
             "image_preprocess": False,
             "ocr_engine": "wechat",
-            "debug_log": ""
+            "debug_log": "",
+            # 翻译配置
+            "enable_translation": True,
+            "translation_source": "auto",
+            "translation_target": "zh",
+            "tencent_secret_id": "",
+            "tencent_secret_key": ""
         }
         
         try:
@@ -168,8 +174,8 @@ class ConfigDialog:
             screen_width = self.root.winfo_screenwidth()
             screen_height = self.root.winfo_screenheight()
             
-            window_width = 450
-            window_height = 600
+            window_width = 480
+            window_height = 720
             
             # 居中
             x = max(50, (screen_width - window_width) // 2)
@@ -298,6 +304,117 @@ class ConfigDialog:
             command=self.update_config
         )
         windows_rb.pack(anchor="w")
+        
+        # 分隔线
+        ttk.Separator(content_frame, orient='horizontal').pack(fill=tk.X, pady=10)
+        
+        # 翻译设置
+        translate_label = ttk.Label(
+            content_frame,
+            text="翻译设置",
+            font=("Microsoft YaHei UI", 11, "bold")
+        )
+        translate_label.pack(anchor="w", pady=(0, 4))
+        
+        # 启用翻译
+        self.enable_translation_var = tk.BooleanVar(
+            value=self.config.get("enable_translation", self.default_config["enable_translation"])
+        )
+        enable_translation_cb = ttk_boot.Checkbutton(
+            content_frame,
+            text="启用选中文字翻译",
+            variable=self.enable_translation_var,
+            bootstyle="round-toggle",
+            command=self.update_config
+        )
+        enable_translation_cb.pack(anchor="w", pady=(0, 8))
+        
+        # 目标语言选择
+        lang_frame = ttk.Frame(content_frame)
+        lang_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        ttk.Label(lang_frame, text="翻译为:", font=("Microsoft YaHei UI", 10)).pack(side=tk.LEFT, padx=(0, 10))
+        
+        self.translation_target_var = tk.StringVar(
+            value=self.config.get("translation_target", self.default_config["translation_target"])
+        )
+        target_lang_combo = ttk_boot.Combobox(
+            lang_frame,
+            textvariable=self.translation_target_var,
+            values=["zh", "en", "ja", "ko", "fr", "de", "es", "ru"],
+            width=10,
+            state="readonly"
+        )
+        target_lang_combo.pack(side=tk.LEFT)
+        target_lang_combo.bind("<<ComboboxSelected>>", lambda e: self.update_config())
+        
+        # 语言名称提示
+        lang_names = {"zh": "中文", "en": "英语", "ja": "日语", "ko": "韩语", 
+                      "fr": "法语", "de": "德语", "es": "西班牙语", "ru": "俄语"}
+        self.lang_hint = ttk.Label(
+            lang_frame, 
+            text=lang_names.get(self.translation_target_var.get(), ""),
+            font=("Microsoft YaHei UI", 9),
+            foreground="#666666"
+        )
+        self.lang_hint.pack(side=tk.LEFT, padx=(10, 0))
+        
+        def update_lang_hint(*args):
+            self.lang_hint.config(text=lang_names.get(self.translation_target_var.get(), ""))
+        self.translation_target_var.trace_add("write", update_lang_hint)
+        
+        # API 密钥设置
+        api_label = ttk.Label(
+            content_frame,
+            text="腾讯云 API 密钥 (翻译功能需要)",
+            font=("Microsoft YaHei UI", 10),
+            foreground="#666666"
+        )
+        api_label.pack(anchor="w", pady=(5, 4))
+        
+        # SecretId
+        id_frame = ttk.Frame(content_frame)
+        id_frame.pack(fill=tk.X, pady=(0, 4))
+        
+        ttk.Label(id_frame, text="SecretId:", width=10).pack(side=tk.LEFT)
+        self.secret_id_var = tk.StringVar(
+            value=self.config.get("tencent_secret_id", "")
+        )
+        secret_id_entry = ttk_boot.Entry(
+            id_frame,
+            textvariable=self.secret_id_var,
+            width=35
+        )
+        secret_id_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        secret_id_entry.bind("<FocusOut>", lambda e: self.update_config())
+        
+        # SecretKey
+        key_frame = ttk.Frame(content_frame)
+        key_frame.pack(fill=tk.X, pady=(0, 8))
+        
+        ttk.Label(key_frame, text="SecretKey:", width=10).pack(side=tk.LEFT)
+        self.secret_key_var = tk.StringVar(
+            value=self.config.get("tencent_secret_key", "")
+        )
+        secret_key_entry = ttk_boot.Entry(
+            key_frame,
+            textvariable=self.secret_key_var,
+            show="*",
+            width=35
+        )
+        secret_key_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        secret_key_entry.bind("<FocusOut>", lambda e: self.update_config())
+        
+        # API 获取提示
+        api_hint = ttk.Label(
+            content_frame,
+            text="💡 在腾讯云控制台 → 访问密钥 获取",
+            font=("Microsoft YaHei UI", 9),
+            foreground="#888888",
+            cursor="hand2"
+        )
+        api_hint.pack(anchor="w", pady=(0, 5))
+        api_hint.bind("<Button-1>", lambda e: self._open_tencent_console())
         
         # 分隔线
         ttk.Separator(content_frame, orient='horizontal').pack(fill=tk.X, pady=10)
@@ -513,8 +630,18 @@ class ConfigDialog:
             "image_preprocess": self.image_preprocess_var.get(),
             "show_debug": self.show_debug_var.get(),
             "ocr_engine": self.ocr_engine_var.get(),
+            # 翻译配置
+            "enable_translation": self.enable_translation_var.get(),
+            "translation_target": self.translation_target_var.get(),
+            "tencent_secret_id": self.secret_id_var.get(),
+            "tencent_secret_key": self.secret_key_var.get(),
         })
         self.callback(self.config)
+    
+    def _open_tencent_console(self):
+        """打开腾讯云控制台"""
+        import webbrowser
+        webbrowser.open("https://console.cloud.tencent.com/cam/capi")
     
     def on_scale_change(self, value):
         """处理滑块值变化"""
@@ -792,7 +919,13 @@ class SystemTray:
             "auto_copy": True,
             "show_debug": False,
             "image_preprocess": False,
-            "debug_log": ""
+            "debug_log": "",
+            # 翻译配置
+            "enable_translation": True,
+            "translation_source": "auto",
+            "translation_target": "zh",
+            "tencent_secret_id": "",
+            "tencent_secret_key": ""
         }
     
     def run(self):

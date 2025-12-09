@@ -15,6 +15,7 @@ import sys
 from wechat_ocr_wrapper import get_wechat_ocr
 from windows_ocr_wrapper import WindowsOCRWrapper
 from splash_screen import SplashScreen, WelcomePage, StartupToast
+from translation_popup import get_translation_manager
 
 # 设置 CustomTkinter 外观
 
@@ -40,7 +41,13 @@ class ScreenOCRTool:
         "auto_copy": True,
         "show_debug": False,
         "debug_log": "",
-        "image_preprocess": False  # 图像预处理（对比度增强+锐化）
+        "image_preprocess": False,  # 图像预处理（对比度增强+锐化）
+        # 翻译配置
+        "enable_translation": True,
+        "translation_source": "auto",
+        "translation_target": "zh",
+        "tencent_secret_id": "",
+        "tencent_secret_key": ""
     }
     
     def __init__(self):
@@ -100,6 +107,9 @@ class ScreenOCRTool:
         
         # 添加选择模式配置
         self.selection_mode: str = 'text'  # 'text' 或 'region'
+        
+        # 翻译管理器
+        self.translation_manager = get_translation_manager()
         
         self.splash.update_progress(0.5, "加载配置文件...")
         
@@ -465,20 +475,14 @@ class ScreenOCRTool:
             logging.error(f"Windows OCR处理失败: {str(e)}")
             return []
 
-    def should_add_space(self, prev_block, next_block, min_gap=10):
+    def should_add_space(self, prev_block, next_block):
+        """判断两个文本块之间是否需要添加空格"""
         if not prev_block or not next_block:
             return False
         
         prev_text = prev_block['text'].strip()
         next_text = next_block['text'].strip()
         if not prev_text or not next_text:
-            return False
-        
-        # 获取两个文本块之间的间距
-        gap = next_block['x'] - (prev_block['x'] + prev_block['width'])
-        
-        # 如果间距小于阈值，不添加空格
-        if gap < min_gap:
             return False
         
         # 定义标点符号集合
@@ -500,21 +504,14 @@ class ScreenOCRTool:
         if is_chinese(prev_char) and is_chinese(next_char):
             return False
         
-        # 检查数字
-        def is_digit(char):
-            return char.isdigit()
-        
-        # 如果都是数字，不添加空格
-        if is_digit(prev_char) and is_digit(next_char):
-            return False
-        
-        # 如果一个是字母，一个是数字，添加空格
-        if (prev_char.isalpha() and is_digit(next_char)) or \
-           (is_digit(prev_char) and next_char.isalpha()):
+        # 如果一个是中文一个是英文/数字，添加空格
+        prev_is_chinese = is_chinese(prev_char)
+        next_is_chinese = is_chinese(next_char)
+        if prev_is_chinese != next_is_chinese:
             return True
         
-        # 如果都是字母，添加空格
-        if prev_char.isalpha() and next_char.isalpha():
+        # 英文单词之间添加空格
+        if prev_char.isalnum() and next_char.isalnum():
             return True
         
         return False
@@ -737,19 +734,31 @@ class ScreenOCRTool:
             self.text_blocks = {}
             self.selected_blocks = set()
             
-            # 存储文本块信息
-            # 注意：Canvas 的 highlightthickness 会影响内容区域
-            # 但由于我们使用 create_image(0, 0, anchor='nw')，图像从 (0,0) 开始
-            # 边框在外部，不影响内部坐标系统，所以不需要偏移补偿
-            for i, block in enumerate(text_blocks):
-                self.text_blocks[i] = {
-                    'text': block['text'],
-                    'x': block['x'],  # 直接使用 OCR 坐标
-                    'y': block['y'],  # 直接使用 OCR 坐标
-                    'width': block['width'],
-                    'height': block['height'],
-                    'selected': False
-                }
+            # 存储文本块信息（智能拆分长文本块）
+            block_id = 0
+            for block in text_blocks:
+                text = block['text']
+                x = block['x']
+                y = block['y']
+                width = block['width']
+                height = block['height']
+                
+                # 如果文本较长，按单词/字符拆分
+                if len(text) > 1 and width > 0:
+                    sub_blocks = self._split_text_block(text, x, y, width, height)
+                    for sub in sub_blocks:
+                        self.text_blocks[block_id] = sub
+                        block_id += 1
+                else:
+                    self.text_blocks[block_id] = {
+                        'text': text,
+                        'x': x,
+                        'y': y,
+                        'width': width,
+                        'height': height,
+                        'selected': False
+                    }
+                    block_id += 1
             
             # OCR识别完成后，将光标设置为默认箭头
             canvas.configure(cursor='arrow')
@@ -794,6 +803,10 @@ class ScreenOCRTool:
                     if text:
                         self.root.clipboard_clear()
                         self.root.clipboard_append(text)
+                        
+                        # 触发翻译
+                        if self.config.get("enable_translation", True):
+                            self._start_translation(text, event.x_root, event.y_root)
             
                 self.selection_start = None
             
@@ -829,6 +842,158 @@ class ScreenOCRTool:
         except Exception as e:
             logging.error(f"显示覆盖层失败: {str(e)}")
             traceback.print_exc()
+    
+    def _split_text_block(self, text: str, x: int, y: int, width: int, height: int) -> list:
+        """
+        智能拆分长文本块为更小的可选单元
+        - 中文：按单个字符
+        - 英文：按单词
+        
+        Args:
+            text: 文本内容
+            x, y: 文本块起始位置
+            width, height: 文本块尺寸
+            
+        Returns:
+            拆分后的文本块列表
+        """
+        result = []
+        
+        if len(text) == 0 or width <= 0:
+            return result
+        
+        def is_chinese(char):
+            return '\u4e00' <= char <= '\u9fff'
+        
+        def is_fullwidth(char):
+            """检查是否是全角字符（中文、日文、全角标点等）"""
+            code = ord(char)
+            return (
+                '\u4e00' <= char <= '\u9fff' or  # CJK 统一汉字
+                '\u3000' <= char <= '\u303f' or  # CJK 标点
+                '\uff00' <= char <= '\uffef' or  # 全角字符
+                '\u3040' <= char <= '\u309f' or  # 平假名
+                '\u30a0' <= char <= '\u30ff'     # 片假名
+            )
+        
+        # 计算加权字符宽度（全角字符算2个单位，半角算1个）
+        total_units = sum(2 if is_fullwidth(c) else 1 for c in text)
+        unit_width = width / total_units if total_units > 0 else width
+        
+        # 计算每个字符的起始位置（基于加权宽度）
+        char_positions = []  # [(start_x, width), ...]
+        current_x = 0
+        for char in text:
+            char_units = 2 if is_fullwidth(char) else 1
+            char_w = char_units * unit_width
+            char_positions.append((current_x, char_w))
+            current_x += char_w
+        
+        # 分段处理：将文本分成中文段和英文单词段
+        # 英文中非字母数字的字符（标点等）也作为分隔符
+        segments = []  # [(text, start_idx, is_chinese), ...]
+        current_segment = ""
+        current_start = 0
+        current_is_chinese = None
+        
+        for i, char in enumerate(text):
+            char_is_chinese = is_chinese(char)
+            is_separator = char == ' ' or (not char_is_chinese and not char.isalnum())
+            
+            if is_separator:
+                # 分隔符结束当前段
+                if current_segment:
+                    segments.append((current_segment, current_start, current_is_chinese))
+                    current_segment = ""
+                current_is_chinese = None
+            elif current_is_chinese is None:
+                # 开始新段
+                current_segment = char
+                current_start = i
+                current_is_chinese = char_is_chinese
+            elif char_is_chinese == current_is_chinese:
+                # 继续当前段
+                current_segment += char
+            else:
+                # 中英文切换，结束当前段
+                if current_segment:
+                    segments.append((current_segment, current_start, current_is_chinese))
+                current_segment = char
+                current_start = i
+                current_is_chinese = char_is_chinese
+        
+        # 添加最后一段
+        if current_segment:
+            segments.append((current_segment, current_start, current_is_chinese))
+        
+        # 处理每个段
+        for segment_text, start_idx, is_chn in segments:
+            if is_chn:
+                # 中文：按单个字符拆分
+                for i, char in enumerate(segment_text):
+                    idx = start_idx + i
+                    char_start_x, char_w = char_positions[idx]
+                    result.append({
+                        'text': char,
+                        'x': x + int(char_start_x),
+                        'y': y,
+                        'width': max(int(char_w), 1),
+                        'height': height,
+                        'selected': False
+                    })
+            else:
+                # 英文：整个单词作为一个块
+                word_start_x = char_positions[start_idx][0]
+                word_end_idx = start_idx + len(segment_text) - 1
+                word_end_x = char_positions[word_end_idx][0] + char_positions[word_end_idx][1]
+                word_width = word_end_x - word_start_x
+                result.append({
+                    'text': segment_text,
+                    'x': x + int(word_start_x),
+                    'y': y,
+                    'width': max(int(word_width), 1),
+                    'height': height,
+                    'selected': False
+                })
+        
+        return result
+    
+    def _start_translation(self, text: str, mouse_x: int, mouse_y: int):
+        """
+        启动翻译
+        
+        Args:
+            text: 待翻译文本
+            mouse_x: 鼠标位置 X
+            mouse_y: 鼠标位置 Y
+        """
+        try:
+            # 获取翻译配置
+            source_lang = self.config.get("translation_source", "auto")
+            target_lang = self.config.get("translation_target", "zh")
+            secret_id = self.config.get("tencent_secret_id", "")
+            secret_key = self.config.get("tencent_secret_key", "")
+            
+            # 启动翻译
+            self.translation_manager.start_translation(
+                text=text,
+                position=(mouse_x, mouse_y),
+                parent=self.root,
+                source_lang=source_lang,
+                target_lang=target_lang,
+                secret_id=secret_id,
+                secret_key=secret_key
+            )
+        except Exception as e:
+            logging.error(f"启动翻译失败: {str(e)}")
+    
+    def _cancel_translation(self):
+        """取消翻译"""
+        try:
+            if self.translation_manager:
+                self.translation_manager.cancel()
+        except Exception as e:
+            logging.error(f"取消翻译失败: {str(e)}")
 
     def capture_and_process(self, width, height):
         """捕获并处理屏幕"""
@@ -892,6 +1057,9 @@ class ScreenOCRTool:
     def cleanup_windows(self):
         """清理窗口"""
         try:
+            # 取消翻译
+            self._cancel_translation()
+            
             if hasattr(self, 'overlay_window') and self.overlay_window:
                 self.overlay_window.destroy()
                 self.overlay_window = None

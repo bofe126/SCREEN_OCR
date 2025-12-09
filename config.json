@@ -7,5 +7,10 @@
     "first_run": true,
     "show_welcome": true,
     "show_startup_notification": true,
-    "ocr_engine": "windows"
+    "ocr_engine": "wechat",
+    "enable_translation": true,
+    "translation_source": "auto",
+    "translation_target": "zh",
+    "tencent_secret_id": "",
+    "tencent_secret_key": ""
 }

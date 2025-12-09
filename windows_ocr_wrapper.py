@@ -100,27 +100,22 @@ class WindowsOCRWrapper:
                 # 执行 OCR
                 result = await self.engine.recognize_async(bitmap)
                 
-                # 解析结果
+                # 解析结果 - 按单词级别返回
                 text_blocks = []
                 for line in result.lines:
-                    # 获取边界框
                     words = list(line.words)
                     if not words:
                         continue
                     
-                    # 计算整行的边界框
-                    min_x = min(word.bounding_rect.x for word in words)
-                    min_y = min(word.bounding_rect.y for word in words)
-                    max_x = max(word.bounding_rect.x + word.bounding_rect.width for word in words)
-                    max_y = max(word.bounding_rect.y + word.bounding_rect.height for word in words)
-                    
-                    text_blocks.append({
-                        'text': line.text,
-                        'x': int(min_x),
-                        'y': int(min_y),
-                        'width': int(max_x - min_x),
-                        'height': int(max_y - min_y)
-                    })
+                    for word in words:
+                        rect = word.bounding_rect
+                        text_blocks.append({
+                            'text': word.text,
+                            'x': int(rect.x),
+                            'y': int(rect.y),
+                            'width': int(rect.width),
+                            'height': int(rect.height)
+                        })
                 
                 return text_blocks
             finally:
